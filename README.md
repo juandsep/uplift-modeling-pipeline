@@ -99,7 +99,8 @@ scripts/fetch_x5.sh gs://PROJECT-uplift-data  # and to GCS
 
 `infra/main.tf` creates the base resources: APIs, the data and MLflow
 buckets, the Artifact Registry repository, service accounts, Workload
-Identity Federation for GitHub and a monthly budget alert.
+Identity Federation for GitHub and a monthly budget that unlinks billing
+from the project once spend reaches it (default $15).
 
 ```bash
 gcloud auth application-default login

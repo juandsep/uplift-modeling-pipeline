@@ -10,6 +10,10 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 6.0"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
+    }
   }
 }
 
@@ -34,8 +38,9 @@ variable "billing_account" {
 }
 
 variable "monthly_budget_usd" {
-  type    = number
-  default = 20
+  description = "Billing is cut at this amount. Kept below the real limit ($20) because billing data lags."
+  type        = number
+  default     = 15
 }
 
 provider "google" {
@@ -213,7 +218,8 @@ resource "google_service_account_iam_member" "github_impersonates_deploy" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
 
-# Budget alert at 50%, 90% and 100%. It notifies, it does not stop spending.
+# Budget alert at 50%, 90% and 100%. Email alone does not stop spending;
+# billing_guard.tf cuts billing when cost reaches the budget.
 
 resource "google_billing_budget" "monthly" {
   billing_account = var.billing_account
@@ -232,6 +238,10 @@ resource "google_billing_budget" "monthly" {
     content {
       threshold_percent = threshold_rules.value
     }
+  }
+  all_updates_rule {
+    pubsub_topic   = google_pubsub_topic.budget.id
+    schema_version = "1.0"
   }
   depends_on = [google_project_service.apis]
 }
