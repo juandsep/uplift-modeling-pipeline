@@ -1,0 +1,7 @@
+.venv
+.git
+graphify-out
+mlruns
+mlartifacts
+tests
+mlflow.db
