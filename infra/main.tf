@@ -55,7 +55,6 @@ data "google_project" "this" {}
 resource "google_project_service" "apis" {
   for_each = toset([
     "artifactregistry.googleapis.com",
-    "billingbudgets.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com",
     "iam.googleapis.com",
@@ -186,32 +185,15 @@ resource "google_service_account_iam_member" "github_impersonates_deploy" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repo}"
 }
 
-# Budget alert at 50%, 90% and 100%. Email alone does not stop spending;
-# billing_guard.tf cuts billing when cost reaches the budget.
-
-resource "google_billing_budget" "monthly" {
+# Monthly budget that unlinks billing once spend reaches it. Shared module
+# from portfolio-infra, pinned to a commit.
+module "budget_guard" {
+  source          = "git::https://github.com/juandsep/portfolio-infra.git//modules/budget-guard?ref=a46ece80773fa45aeeb0bd3109b2268ca05949ce"
+  project_id      = var.project_id
+  region          = var.region
   billing_account = var.billing_account
-  display_name    = "uplift-pipeline monthly"
-  budget_filter {
-    projects = ["projects/${data.google_project.this.number}"]
-  }
-  amount {
-    specified_amount {
-      currency_code = "USD"
-      units         = tostring(var.monthly_budget_usd)
-    }
-  }
-  dynamic "threshold_rules" {
-    for_each = [0.5, 0.9, 1.0]
-    content {
-      threshold_percent = threshold_rules.value
-    }
-  }
-  all_updates_rule {
-    pubsub_topic   = google_pubsub_topic.budget.id
-    schema_version = "1.0"
-  }
-  depends_on = [google_project_service.apis]
+  amount_usd      = var.monthly_budget_usd
+  source_bucket   = google_storage_bucket.data.name
 }
 
 # Values for the GitHub repository variables (see README).
