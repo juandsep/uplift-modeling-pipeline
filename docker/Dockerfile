@@ -4,7 +4,8 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+# Pinned uv release, not `latest`: the build must not change under our feet.
+COPY --from=ghcr.io/astral-sh/uv:0.12.18 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_DEV=1
 
 WORKDIR /app
@@ -13,6 +14,14 @@ RUN uv sync --locked --no-install-project
 COPY src ./src
 RUN uv sync --locked
 
-ENV PATH="/app/.venv/bin:$PATH" PORT=8080
+# Non-root: the serving process must not be able to write outside its own home.
+RUN useradd --create-home --uid 10001 app && chown -R app:app /app
+USER app
+
+ENV HOME=/home/app PATH="/app/.venv/bin:$PATH" PORT=8080
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c 'import os,urllib.request; urllib.request.urlopen("http://127.0.0.1:"+os.environ.get("PORT","8080")+"/health").read()'
+
 CMD ["sh", "-c", "uvicorn uplift_pipeline.serving.app:app --host 0.0.0.0 --port ${PORT}"]

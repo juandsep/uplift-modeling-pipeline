@@ -52,5 +52,6 @@ def test_serving_refuses_floating_alias(tmp_path, monkeypatch):
     client = TestClient(serving.app, raise_server_exceptions=False)
     resp = client.post("/predict", json={"records": [{"x": 1.0}]}, headers=HEADERS)
 
-    assert resp.status_code == 500
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "service unavailable"
     assert "uplift" not in resp.text
