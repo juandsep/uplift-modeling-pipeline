@@ -77,27 +77,6 @@ def merge_features(features_dir: str, shards: list[dict[str, int]]) -> str:
 
 @task.external_python(**VENV)
 def train(features_path: str) -> dict[str, float]:
-    import os
-    import urllib.parse
-    import urllib.request
-
-    # MLflow behind Cloud Run IAM needs an identity token, and those expire
-    # after an hour, so one pasted into .env goes stale. On GCE, mint a fresh
-    # one from the VM's service account; elsewhere keep MLFLOW_TRACKING_TOKEN.
-    uri = os.environ.get("MLFLOW_TRACKING_URI", "")
-    if uri.startswith("https://"):
-        req = urllib.request.Request(
-            "http://metadata.google.internal/computeMetadata/v1/instance/"
-            "service-accounts/default/identity?audience="
-            + urllib.parse.quote(uri, safe=""),
-            headers={"Metadata-Flavor": "Google"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                os.environ["MLFLOW_TRACKING_TOKEN"] = resp.read().decode()
-        except OSError:
-            pass  # Not on GCE.
-
     from uplift_pipeline.train import run
 
     # Plain floats: numpy scalars would not unpickle in Airflow's environment.

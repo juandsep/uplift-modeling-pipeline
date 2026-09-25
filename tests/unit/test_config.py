@@ -1,4 +1,9 @@
-"""Model pinning: serving must not follow a floating registry alias."""
+"""Runtime config: model pinning and the MLflow identity token."""
+
+import io
+import os
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -44,3 +49,45 @@ def test_model_uri_env_wins(monkeypatch):
     monkeypatch.setenv("MODEL_VERSION", "7")
     monkeypatch.setenv("MODEL_URI", "runs:/abc/model")
     assert config.resolve_model_uri() == "runs:/abc/model"
+
+
+def test_mlflow_token_minted_on_gce(monkeypatch):
+    monkeypatch.delenv("MLFLOW_TRACKING_TOKEN", raising=False)
+    calls = []
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(req, timeout):
+        calls.append(req)
+        return Resp(b"fresh-token")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    config.refresh_mlflow_token("https://mlflow.example.run.app")
+
+    assert os.environ["MLFLOW_TRACKING_TOKEN"] == "fresh-token"
+    assert calls[0].get_header("Metadata-flavor") == "Google"
+    assert "audience=https%3A%2F%2Fmlflow.example.run.app" in calls[0].full_url
+
+
+def test_mlflow_token_kept_off_gce(monkeypatch):
+    monkeypatch.setenv("MLFLOW_TRACKING_TOKEN", "pasted")
+
+    def fake_urlopen(req, timeout):
+        raise urllib.error.URLError("no metadata server")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    config.refresh_mlflow_token("https://mlflow.example.run.app")
+    assert os.environ["MLFLOW_TRACKING_TOKEN"] == "pasted"
+
+
+def test_mlflow_token_skipped_for_local_store(monkeypatch):
+    def fail(*args, **kwargs):
+        raise AssertionError("metadata server must not be called")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail)
+    config.refresh_mlflow_token("sqlite:///mlflow.db")
