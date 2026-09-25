@@ -74,6 +74,8 @@ class PredictResponse(BaseModel):
 @lru_cache
 def get_model() -> PyFuncModel:
     config.assert_model_uri_is_pinned(config.MODEL_URI)
+    # The shared MLflow server is IAM-only; the model is loaded once, at startup.
+    config.refresh_mlflow_token(config.MLFLOW_TRACKING_URI)
     mlflow.set_tracking_uri(config.MLFLOW_TRACKING_URI)
     return mlflow.pyfunc.load_model(config.MODEL_URI)
 
