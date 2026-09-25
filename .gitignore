@@ -29,7 +29,7 @@ mlflow.db
 .ipynb_checkpoints/
 
 # Datasets and Terraform state stay local.
-data/
+/data/
 infra/.terraform/
 infra/*.tfstate*
 infra/terraform.tfvars
