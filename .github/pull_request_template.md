@@ -1,20 +1,26 @@
-## What changed
+<!-- Feature, fix or chore branch into `dev`. For `dev` into `main`, use
+     ?template=release.md on the PR URL. -->
 
-<!-- One paragraph: what behavior changed and why. -->
+## Summary
 
-## Branch flow
+<!-- What changed, in 1-3 sentences. -->
 
-- [ ] Cut from `dev`
-- [ ] Targets `dev` (never `main` directly)
+## Why
 
-## Checks
+<!-- The problem or need behind the change. -->
 
-- [ ] `uv run pre-commit run --all-files`
-- [ ] `uv run pytest`
-- [ ] `uv run mypy src`
+## How to test
 
-## Security
+<!-- Commands or steps a reviewer can run. -->
 
-- [ ] No credentials, tokens or private keys added
-- [ ] Inputs validated and errors do not echo internals
+## Docs
+
+- [ ] README / CONTRIBUTING updated, or not needed
+
+## Checklist
+
+- [ ] Branch cut from `dev` and targets `dev`
+- [ ] `uv run pre-commit run --all-files` passes
+- [ ] `uv run pytest` and `uv run mypy src` pass
+- [ ] No credentials, tokens or keys added
 - [ ] Serving changes keep the model pinned (`MODEL_VERSION`)
