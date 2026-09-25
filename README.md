@@ -72,6 +72,7 @@ uv run mypy src
 | `MLFLOW_TRACKING_URI` | `sqlite:///mlflow.db` | MLflow server |
 | `MLFLOW_EXPERIMENT` | `uplift` | Experiment name |
 | `REGISTERED_MODEL` | `uplift-model` | Registry model name |
+| `FEATURES_PATH` | none | X5 feature table (Parquet) to train on; unset uses synthetic data |
 | `MODEL_VERSION` | none | Model version to serve |
 | `MODEL_URI` | none | Full model URI, overrides `MODEL_VERSION` |
 | `ALLOW_UNPINNED_MODEL` | `false` | Local only: allow serving `latest` |
