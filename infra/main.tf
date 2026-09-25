@@ -103,14 +103,28 @@ resource "google_artifact_registry_repository" "images" {
   }
 }
 
-# The value is added by hand, never through Terraform, so it stays out of state:
+# One API key per environment. Values are added by hand, never through
+# Terraform, so they stay out of state:
 #   printf '%s' "$KEY" | gcloud secrets versions add uplift-api-key --data-file=-
+locals {
+  api_key_secrets = {
+    production = "uplift-api-key"
+    staging    = "uplift-api-key-staging"
+  }
+}
+
 resource "google_secret_manager_secret" "api_key" {
-  secret_id = "uplift-api-key"
+  for_each  = local.api_key_secrets
+  secret_id = each.value
   replication {
     auto {}
   }
   depends_on = [google_project_service.apis]
+}
+
+moved {
+  from = google_secret_manager_secret.api_key
+  to   = google_secret_manager_secret.api_key["production"]
 }
 
 # Service accounts
@@ -145,9 +159,15 @@ resource "google_service_account_iam_member" "deploy_acts_as_api" {
 }
 
 resource "google_secret_manager_secret_iam_member" "api_reads_key" {
-  secret_id = google_secret_manager_secret.api_key.id
+  for_each  = google_secret_manager_secret.api_key
+  secret_id = each.value.id
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.sa["api"].member
+}
+
+moved {
+  from = google_secret_manager_secret_iam_member.api_reads_key
+  to   = google_secret_manager_secret_iam_member.api_reads_key["production"]
 }
 
 resource "google_storage_bucket_iam_member" "training_data" {

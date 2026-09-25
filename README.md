@@ -123,19 +123,36 @@ printf '%s' "$API_KEY" | gcloud secrets versions add uplift-api-key --data-file=
 
 ### API (Cloud Run)
 
-The `Deploy` workflow runs on every push to `main`. It builds the image,
-pushes it to Artifact Registry and deploys the `uplift-api` service.
+The `Deploy` workflow builds the image, pushes it to Artifact Registry and
+deploys it to Cloud Run:
+
+| Branch | GitHub environment | Service | API key secret |
+|---|---|---|---|
+| `dev` | `staging` (no approval) | `uplift-api-staging` | `uplift-api-key-staging` |
+| `main`, `v*` tags | `production` (reviewer approval) | `uplift-api` | `uplift-api-key` |
+
+Both scale to zero. Every merge into `dev` lands on staging first; releasing
+`dev` into `main` ships the same code to production once approved.
 
 One-time setup, after `terraform apply`:
 
 1. Add the values from `terraform output github_variables` as repository
-   variables in GitHub (Settings > Variables), plus `MLFLOW_TRACKING_URI`
-   and `MODEL_VERSION`.
-2. Create a `production` environment with required reviewers, so deploys
-   wait for approval.
+   variables in GitHub (Settings > Variables), plus `MLFLOW_TRACKING_URI`.
+2. Create the `staging` (branch `dev`) and `production` (branch `main`, tags
+   `v*`, required reviewers) environments, each with a `MODEL_VERSION`
+   variable, so staging can try a new model before production.
+3. Store an API key in each secret without echoing it:
+   `openssl rand -hex 24 | tr -d '\n' | gcloud secrets versions add uplift-api-key-staging --data-file=-`
 
-The service requires authenticated calls (Cloud Run IAM) on top of the API
-key. Callers need `roles/run.invoker`.
+The services require authenticated calls (Cloud Run IAM) on top of the API
+key. Callers need `roles/run.invoker`:
+
+```bash
+curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "X-API-Key: $(gcloud secrets versions access latest --secret uplift-api-key-staging)" \
+  -H "Content-Type: application/json" -d @request.json \
+  https://uplift-api-staging-326985451793.us-central1.run.app/predict
+```
 
 ## Contributing
 

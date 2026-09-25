@@ -2,7 +2,9 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    # dev deploys to staging on every merge; main deploys to production after
+    # a reviewer approves the environment.
+    branches: [dev, main]
     tags: ["v*"]
 
 concurrency:
@@ -14,6 +16,7 @@ permissions:
   id-token: write # Workload Identity Federation, no service account keys.
 
 env:
+  STAGING: ${{ github.ref == 'refs/heads/dev' }}
   REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev
   IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/uplift-api:${{ github.sha }}
 
@@ -22,16 +25,16 @@ jobs:
     # Skip until the GCP repository variables exist (see README).
     if: vars.GCP_PROJECT_ID != ''
     runs-on: ubuntu-latest
-    # Requires a protected environment with required reviewers configured in
-    # the repository settings, so main is never shipped unattended.
-    environment: production
+    # production requires a reviewer (repository settings), so main is never
+    # shipped unattended. MODEL_VERSION is set per environment.
+    environment: ${{ github.ref == 'refs/heads/dev' && 'staging' || 'production' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # A half-configured repository must fail loudly, not deploy a service
       # that refuses every prediction: MODEL_VERSION empty means the API serves
       # nothing (see config.assert_model_uri_is_pinned).
-      - name: Check the required repository variables
+      - name: Check the required variables
         env:
           GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           GCP_REGION: ${{ vars.GCP_REGION }}
@@ -46,7 +49,7 @@ jobs:
           for name in GCP_PROJECT_ID GCP_REGION GCP_ARTIFACT_REPO GCP_WIF_PROVIDER \
                       GCP_DEPLOY_SA GCP_RUNTIME_SA MLFLOW_TRACKING_URI MODEL_VERSION; do
             if [ -z "${!name}" ]; then
-              echo "::error::repository variable $name is empty; set it before deploying"
+              echo "::error::variable $name is empty; set it before deploying"
               missing=1
             fi
           done
@@ -78,15 +81,18 @@ jobs:
 
       - uses: google-github-actions/deploy-cloudrun@2028e2d7d30a78c6910e0632e48dd561b064884d # v3.0.1
         with:
-          service: uplift-api
+          service: ${{ env.STAGING == 'true' && 'uplift-api-staging' || 'uplift-api' }}
           region: ${{ vars.GCP_REGION }}
           image: ${{ env.IMAGE }}
           # Cap the fan-out: the API has no rate limiting of its own.
+          # Scales to zero; staging gets a smaller cap.
           flags: >-
             --service-account=${{ vars.GCP_RUNTIME_SA }}
-            --max-instances=10
+            --memory=1Gi
+            --min-instances=0
+            --max-instances=${{ env.STAGING == 'true' && '2' || '10' }}
           env_vars: |
             MLFLOW_TRACKING_URI=${{ vars.MLFLOW_TRACKING_URI }}
             MODEL_VERSION=${{ vars.MODEL_VERSION }}
           secrets: |
-            API_KEY=uplift-api-key:latest
+            API_KEY=${{ env.STAGING == 'true' && 'uplift-api-key-staging' || 'uplift-api-key' }}:latest
