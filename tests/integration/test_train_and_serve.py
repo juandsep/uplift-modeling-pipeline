@@ -1,3 +1,5 @@
+import numpy as np
+import pandas as pd
 from fastapi.testclient import TestClient
 from mlflow import MlflowClient
 
@@ -14,10 +16,11 @@ def test_train_register_and_serve(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MLFLOW_TRACKING_URI", tracking_uri)
     monkeypatch.setattr(config, "API_KEY", "test-key")
     monkeypatch.setattr(config, "ALLOW_UNPINNED_MODEL", False)
+    monkeypatch.setattr(config, "FEATURES_PATH", None)
     serving.get_model.cache_clear()
 
     metrics = run(n_samples=2000)
-    assert set(metrics) == {"qini", "auuc"}
+    assert set(metrics) == {"qini", "auuc", "ate", "mean_uplift"}
 
     versions = MlflowClient(tracking_uri=tracking_uri).search_model_versions(
         f"name = '{config.REGISTERED_MODEL}'"
@@ -40,6 +43,50 @@ def test_train_register_and_serve(tmp_path, monkeypatch):
 
     unauth = client.post("/predict", json={"records": records})
     assert unauth.status_code == 401
+
+
+def test_train_on_x5_features_with_nulls(tmp_path, monkeypatch):
+    tracking_uri = f"sqlite:///{tmp_path}/m.db"
+    monkeypatch.setattr(config, "MLFLOW_TRACKING_URI", tracking_uri)
+    monkeypatch.setattr(config, "API_KEY", "test-key")
+    serving.get_model.cache_clear()
+    rng = np.random.default_rng(0)
+    n = 400
+    w = rng.integers(0, 2, n)
+    age = pd.array(rng.integers(18, 80, n), dtype="Int64")
+    age[rng.uniform(size=n) < 0.2] = pd.NA
+    table = pd.DataFrame(
+        {
+            "client_id": [f"c{i}" for i in range(n)],
+            "treatment": w,
+            "y": (rng.uniform(size=n) < 0.6 + 0.05 * w).astype(int),
+            "age": age,
+            "spend": np.where(rng.uniform(size=n) < 0.1, np.nan, rng.gamma(2, 50, n)),
+        }
+    )
+    path = tmp_path / "client_features.parquet"
+    table.to_parquet(path)
+
+    metrics = run(features_path=str(path))
+
+    assert set(metrics) == {"qini", "auuc", "ate", "mean_uplift"}
+    client = MlflowClient(tracking_uri=tracking_uri)
+    version = client.search_model_versions(f"name = '{config.REGISTERED_MODEL}'")[0]
+    params = client.get_run(version.run_id).data.params
+    assert params["dataset"] == "x5"
+    assert params["n_rows"] == str(n)
+    assert params["n_features"] == "2"
+    assert params["features_path"] == str(path)
+
+    monkeypatch.setattr(
+        config, "MODEL_URI", f"models:/{config.REGISTERED_MODEL}/{version.version}"
+    )
+    records = [{"age": None, "spend": None}, {"age": 40, "spend": 12.5}]
+    resp = TestClient(serving.app).post(
+        "/predict", json={"records": records}, headers=HEADERS
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["uplift"]) == 2
 
 
 def test_serving_refuses_floating_alias(tmp_path, monkeypatch):
