@@ -17,6 +17,7 @@ dependencies = [
     "pandas>=2.2.0",
     "scikit-learn>=1.4.0",
     "duckdb>=1.5.5",
+    "google-cloud-storage>=3.0",
 ]
 
 [build-system]
