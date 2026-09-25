@@ -74,6 +74,7 @@ uv run mypy src
 | `MLFLOW_EXPERIMENT` | `uplift` | Experiment name |
 | `REGISTERED_MODEL` | `uplift-model` | Registry model name |
 | `FEATURES_PATH` | none | X5 feature table (Parquet) to train on; unset uses synthetic data |
+| `LEARNERS` | `t_xgb,x_xgb` | Learners to compare (`t_xgb`, `x_xgb`, `s_xgb`); the best Qini is registered |
 | `MODEL_VERSION` | none | Model version to serve |
 | `MODEL_URI` | none | Full model URI, overrides `MODEL_VERSION` |
 | `ALLOW_UNPINNED_MODEL` | `false` | Local only: allow serving `latest` |
