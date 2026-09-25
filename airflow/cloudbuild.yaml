@@ -1,0 +1,19 @@
+# Build the Airflow image on x86 (causalml has wheels there) and push it to
+# Artifact Registry. From the repo root:
+#   gcloud builds submit --config airflow/cloudbuild.yaml .
+# Pass --substitutions _TAG=<tag> for a tag other than latest (then apply with
+# -var airflow_image_tag=<tag>).
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - airflow/Dockerfile
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/uplift/airflow:$_TAG
+      - .
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/uplift/airflow:$_TAG
+substitutions:
+  _TAG: latest
+timeout: 1800s

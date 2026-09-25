@@ -7,7 +7,9 @@ x-airflow: &airflow
   build:
     context: ..
     dockerfile: airflow/Dockerfile
-  image: uplift-airflow:local
+  # Set AIRFLOW_IMAGE to a pushed image to pull instead of build (the GCP VM
+  # does; see airflow/cloudbuild.yaml). Local `up --build` builds this tag.
+  image: ${AIRFLOW_IMAGE:-uplift-airflow:local}
   # Match the host user on Linux so bind-mounted data/ stays writable.
   user: "${AIRFLOW_UID:-50000}:0"
   environment: &env
