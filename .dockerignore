@@ -1,7 +1,16 @@
 .venv
 .git
+.github
 graphify-out
 mlruns
 mlartifacts
 tests
 mlflow.db
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.pre-commit-config.yaml
+.env
+.env.*
+*.pem
+.DS_Store
