@@ -102,7 +102,8 @@ scripts/fetch_x5.sh gs://PROJECT-uplift-data  # and to GCS
 `infra/main.tf` creates the base resources: APIs, the data
 bucket, the Artifact Registry repository, service accounts, Workload
 Identity Federation for GitHub and a monthly budget that unlinks billing
-from the project once spend reaches it (default $15).
+from the project once spend reaches it (default $15). `infra/airflow_vm.tf`
+adds an optional spot VM for Airflow, off by default (see `airflow/README.md`).
 
 ```bash
 gcloud auth application-default login
