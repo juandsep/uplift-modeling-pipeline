@@ -1,4 +1,4 @@
-"""Weekly retraining on X5: ingest -> feature shards -> merge -> train.
+"""Retraining on X5: ingest -> feature shards -> merge -> train.
 
 Pipeline tasks run in /opt/venv, the package's own uv environment (see
 airflow/Dockerfile), through @task.external_python. Only each function's source
@@ -84,7 +84,8 @@ def train(features_path: str) -> dict[str, float]:
 
 
 @dag(
-    schedule="@weekly",
+    # The dataset is static: manual triggers only.
+    schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,
     # Runs share the same output paths; two at once would clobber each other.
