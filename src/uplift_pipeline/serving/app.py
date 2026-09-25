@@ -89,6 +89,13 @@ def health() -> dict[str, str]:
     dependencies=[Depends(require_api_key)],
 )
 def predict(req: PredictRequest) -> PredictResponse:
+    empty = [i for i, r in enumerate(req.records) if all(v is None for v in r.values())]
+    if empty:
+        # Some nulls are fine (the model handles NaN); all null carries no signal.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"records with all features null: {empty[:10]}",
+        )
     try:
         uplift = get_model().predict(pd.DataFrame(req.records))
     except RuntimeError:
