@@ -5,7 +5,7 @@ from mlflow import MlflowClient
 from sklearn.model_selection import train_test_split
 
 from uplift_pipeline import config
-from uplift_pipeline.data import load_training_data
+from uplift_pipeline.data import load_training_data, load_x5_features
 from uplift_pipeline.evaluation import uplift_metrics
 from uplift_pipeline.models import UpliftModel
 
@@ -19,10 +19,26 @@ def registered_version(run_id: str) -> str | None:
     return versions[0].version if versions else None
 
 
-def run(n_samples: int = 10_000, seed: int = 42) -> dict[str, float]:
-    df, features = load_training_data(n_samples, seed)
+def run(
+    n_samples: int = 10_000, seed: int = 42, features_path: str | None = None
+) -> dict[str, float]:
+    """Train on the X5 table at features_path (or FEATURES_PATH), else synthetic.
+
+    n_samples only applies to synthetic data.
+    """
+    features_path = features_path or config.FEATURES_PATH
+    if features_path:
+        df, features = load_x5_features(features_path)
+        dataset: dict[str, str | int] = {
+            "dataset": "x5",
+            "features_path": features_path,
+        }
+    else:
+        df, features = load_training_data(n_samples, seed)
+        dataset = {"dataset": "synthetic", "n_samples": n_samples}
+    # Stratify on both so each split keeps the arm sizes and the base rates.
     train_df, test_df = train_test_split(
-        df, test_size=0.3, random_state=seed, stratify=df["treatment"]
+        df, test_size=0.3, random_state=seed, stratify=df[["treatment", "y"]]
     )
     model = UpliftModel(features).fit(train_df)
     metrics = uplift_metrics(
@@ -33,7 +49,15 @@ def run(n_samples: int = 10_000, seed: int = 42) -> dict[str, float]:
     mlflow.set_experiment(config.EXPERIMENT_NAME)
     version = None
     with mlflow.start_run() as active_run:
-        mlflow.log_params({"n_samples": n_samples, "seed": seed, "learner": "t_xgb"})
+        mlflow.log_params(
+            {
+                **dataset,
+                "n_rows": len(df),
+                "n_features": len(features),
+                "seed": seed,
+                "learner": "t_xgb",
+            }
+        )
         mlflow.log_metrics(metrics)
         mlflow.pyfunc.log_model(
             name="model",

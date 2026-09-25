@@ -61,7 +61,10 @@ async def reject_oversized_body(
 
 
 class PredictRequest(BaseModel):
-    records: list[dict[str, float]] = Field(min_length=1, max_length=config.MAX_RECORDS)
+    # null = missing feature value (e.g. unknown age); the model handles NaN.
+    records: list[dict[str, float | None]] = Field(
+        min_length=1, max_length=config.MAX_RECORDS
+    )
 
 
 class PredictResponse(BaseModel):
