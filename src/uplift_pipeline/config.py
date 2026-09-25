@@ -58,7 +58,7 @@ def assert_model_uri_is_pinned(uri: str) -> None:
 
 
 def refresh_mlflow_token(uri: str) -> None:
-    """On GCE, mint a fresh identity token for an IAM-protected MLflow server.
+    """On GCE or Cloud Run, mint an identity token for the IAM-only MLflow server.
 
     Tokens expire after an hour, so mint right before talking to MLflow.
     Elsewhere, MLFLOW_TRACKING_TOKEN is left as is.
@@ -75,4 +75,4 @@ def refresh_mlflow_token(uri: str) -> None:
         with urllib.request.urlopen(req, timeout=2) as resp:
             os.environ["MLFLOW_TRACKING_TOKEN"] = resp.read().decode()
     except OSError:
-        pass  # Not on GCE.
+        pass  # No metadata server: not on GCP.
