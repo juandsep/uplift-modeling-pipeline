@@ -1,66 +1,130 @@
 # uplift-pipeline
 
-Automated uplift modeling pipeline: XGBoost T-learner (causalml), Qini/AUUC
-evaluation, MLflow tracking and registry, Airflow retraining, FastAPI serving.
+Uplift model that estimates how much a treatment (a campaign, a discount)
+changes the chance that a customer converts. It trains an XGBoost T-learner
+with causalml, scores it with Qini and AUUC, tracks runs in MLflow and serves
+predictions through a FastAPI endpoint. Retraining runs weekly on Airflow.
 
-## Layout
+Training data is synthetic for now (`src/uplift_pipeline/data`).
 
-- `src/uplift_pipeline/data` - ingestion (synthetic for now)
-- `src/uplift_pipeline/models` - causal model, wrapped as MLflow pyfunc
-- `src/uplift_pipeline/evaluation` - Qini and AUUC
-- `src/uplift_pipeline/train.py` - train, evaluate, log, register
-- `src/uplift_pipeline/serving` - FastAPI inference API
-- `dags/` - Airflow DAG
-- `docker/` - serving image
+## Project layout
 
-## Usage
+```
+src/uplift_pipeline/
+  config.py        settings from environment variables
+  data/            data loading
+  models/          T-learner, saved as an MLflow pyfunc model
+  evaluation/      Qini and AUUC
+  train.py         train, evaluate, register the model
+  serving/app.py   FastAPI app
+dags/              Airflow DAG (weekly retraining)
+docker/            API image
+tests/             unit and integration tests
+```
+
+## Run locally
+
+Requires [uv](https://docs.astral.sh/uv/). On macOS, xgboost also needs
+`brew install libomp`.
 
 ```bash
 uv sync
 uv run pre-commit install
-uv run python -m uplift_pipeline.train                     # trains and registers the model
-API_KEY=dev-key uv run uvicorn uplift_pipeline.serving.app:app --reload
-uv run pytest
 ```
 
-`/predict` requires the `X-API-Key` header:
+Train and register a model. It prints the version it registered:
 
 ```bash
-curl -s localhost:8000/predict -H "X-API-Key: dev-key" -H "Content-Type: application/json" \
-  -d '{"records": [{"x1_informative": 0.5, "x2_informative": -1.2}]}'
+uv run python -m uplift_pipeline.train
+# registered uplift-model version 1 (serve it with MODEL_VERSION=1)
 ```
 
-macOS: xgboost needs OpenMP (`brew install libomp`).
+Start the API with that version:
 
-Settings (env vars):
+```bash
+MODEL_VERSION=1 API_KEY=dev-key uv run uvicorn uplift_pipeline.serving.app:app --reload
+```
 
-| Variable | Default | Notes |
+Each record must include every feature the model was trained on
+(`x1_informative` ... `x13_increase_mix` with the synthetic data):
+
+```bash
+curl -s localhost:8000/predict \
+  -H "X-API-Key: dev-key" -H "Content-Type: application/json" \
+  -d @request.json
+```
+
+Run the checks:
+
+```bash
+uv run pytest
+uv run pre-commit run --all-files
+uv run mypy src
+```
+
+## Configuration
+
+| Variable | Default | Description |
 |---|---|---|
-| `MLFLOW_TRACKING_URI` | `sqlite:///mlflow.db` | Use an authenticated server in prod |
-| `MLFLOW_EXPERIMENT` | `uplift` | |
-| `REGISTERED_MODEL` | `uplift-model` | |
-| `MODEL_URI` | built from the vars below | Explicit model URI; overrides pinning |
-| `MODEL_VERSION` | none | Pinned registry version, e.g. `3` |
-| `ALLOW_UNPINNED_MODEL` | `false` | Local dev only: allow `latest`/stage aliases |
-| `API_KEY` | none | Required by `/predict`; the API returns 503 without it |
+| `MLFLOW_TRACKING_URI` | `sqlite:///mlflow.db` | MLflow server |
+| `MLFLOW_EXPERIMENT` | `uplift` | Experiment name |
+| `REGISTERED_MODEL` | `uplift-model` | Registry model name |
+| `MODEL_VERSION` | none | Model version to serve |
+| `MODEL_URI` | none | Full model URI, overrides `MODEL_VERSION` |
+| `ALLOW_UNPINNED_MODEL` | `false` | Local only: allow serving `latest` |
+| `API_KEY` | none | Required by `/predict` (sent as `X-API-Key`) |
 | `MAX_RECORDS` | `1000` | Max rows per request |
-| `MAX_BODY_BYTES` | `1048576` | Max request body |
+| `MAX_BODY_BYTES` | `1048576` | Max request size |
 
-The API authenticates but does not rate limit. Put it behind an ingress or
-gateway that does, and terminate TLS there. `MLFLOW_TRACKING_USERNAME`,
-`MLFLOW_TRACKING_PASSWORD` and `MLFLOW_TRACKING_TOKEN` are read by MLflow
-directly when the registry requires auth.
+The API only serves a fixed model version, never `latest`. Loading a model
+runs pickled code, so a moving alias would let anyone with registry write
+access change what runs in production. To release a new model, set
+`MODEL_VERSION` to the new version.
 
-## Model pinning
+## Deploy on GCP
 
-Serving refuses to load a floating alias (`latest`, `staging`): anyone able to
-write to the registry could otherwise swap the model under a live service.
-`mlflow.pyfunc.load_model` deserializes a pickle, so a poisoned registry entry
-means code execution. Train prints the version it registered:
+The API runs on Cloud Run and the DAG on Cloud Composer.
 
+### API (Cloud Run)
+
+The `Deploy` workflow runs on every push to `main`. It builds the image,
+pushes it to Artifact Registry and deploys the `uplift-api` service.
+
+One-time setup:
+
+1. Create an Artifact Registry Docker repository.
+2. Set up Workload Identity Federation for this GitHub repository and a
+   deploy service account with `roles/run.admin`,
+   `roles/artifactregistry.writer` and `roles/iam.serviceAccountUser`.
+3. Create a runtime service account for the service with
+   `roles/secretmanager.secretAccessor`.
+4. Store the API key in Secret Manager as `uplift-api-key`.
+5. Add these repository variables in GitHub (Settings > Variables):
+   `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_ARTIFACT_REPO`, `GCP_WIF_PROVIDER`,
+   `GCP_DEPLOY_SA`, `GCP_RUNTIME_SA`, `MLFLOW_TRACKING_URI`, `MODEL_VERSION`.
+6. Create a `production` environment with required reviewers, so deploys
+   wait for approval.
+
+The service requires authenticated calls (Cloud Run IAM) on top of the API
+key. Callers need `roles/run.invoker`.
+
+### Training (Cloud Composer)
+
+The Composer environment needs this package installed. Build it and publish
+it to an Artifact Registry Python repository that the environment can
+install from:
+
+```bash
+uv build
+uv publish --publish-url https://REGION-python.pkg.dev/PROJECT/REPO/
+gcloud composer environments update ENV --location REGION \
+  --update-pypi-package "uplift-pipeline==0.1.0" \
+  --update-env-variables MLFLOW_TRACKING_URI=https://your-mlflow-server
+gcloud composer environments storage dags import --environment ENV \
+  --location REGION --source dags/uplift_training_dag.py
 ```
-registered uplift-model version 3 (serve it with MODEL_VERSION=3)
-```
 
-Promote by exporting `MODEL_VERSION` from the release pipeline, not by moving
-aliases. `ALLOW_UNPINNED_MODEL=1` is for local dev only.
+## Contributing
+
+Work goes on a branch cut from `dev`, is merged into `dev`, and `dev` is
+merged into `main` to release. See [CONTRIBUTING.md](CONTRIBUTING.md).
