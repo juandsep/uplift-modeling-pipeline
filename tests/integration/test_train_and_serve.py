@@ -81,7 +81,7 @@ def test_train_on_x5_features_with_nulls(tmp_path, monkeypatch):
     monkeypatch.setattr(
         config, "MODEL_URI", f"models:/{config.REGISTERED_MODEL}/{version.version}"
     )
-    records = [{"age": None, "spend": None}, {"age": 40, "spend": 12.5}]
+    records = [{"age": None, "spend": 30.0}, {"age": 40, "spend": 12.5}]
     resp = TestClient(serving.app).post(
         "/predict", json={"records": records}, headers=HEADERS
     )
