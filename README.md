@@ -3,10 +3,11 @@
 Uplift model that estimates how much a treatment (a campaign, a discount)
 changes the chance that a customer converts. It trains an XGBoost T-learner
 with causalml, scores it with Qini and AUUC, tracks runs in MLflow and serves
-predictions through a FastAPI endpoint. Retraining runs weekly on Airflow.
+predictions through a FastAPI endpoint. An Airflow DAG runs ingestion,
+sharded feature building and training on demand.
 
-Training data is synthetic for now (`src/uplift_pipeline/data`); see Data
-below for the real dataset.
+It trains on the X5 RetailHero dataset (see Data below). Without
+`FEATURES_PATH` it falls back to synthetic data, which the tests use.
 
 ## Project layout
 
@@ -18,7 +19,7 @@ src/uplift_pipeline/
   evaluation/      Qini and AUUC
   train.py         train, evaluate, register the model
   serving/app.py   FastAPI app
-dags/              Airflow DAG (weekly retraining)
+dags/              Airflow DAG (ingest, features, train)
 infra/             Terraform for the GCP resources
 scripts/           dataset download
 docker/            API image
