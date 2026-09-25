@@ -88,6 +88,13 @@ def health() -> dict[str, str]:
 def predict(req: PredictRequest) -> PredictResponse:
     try:
         uplift = get_model().predict(pd.DataFrame(req.records))
+    except RuntimeError:
+        # The configured model is refused (see config.assert_model_uri_is_pinned).
+        logger.exception("refusing to serve the configured model")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="service unavailable",
+        ) from None
     except (MlflowException, KeyError, ValueError, TypeError):
         # Never echo internal errors back to the caller: they leak the feature
         # schema and the tracking URI. Details go to the log instead.
