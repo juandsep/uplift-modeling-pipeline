@@ -9,7 +9,7 @@ The raw CSVs are not downloaded here: run scripts/fetch_x5.sh first.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from airflow.sdk import Variable, dag, task
 
@@ -90,6 +90,8 @@ def train(features_path: str) -> dict[str, float]:
     catchup=False,
     # Runs share the same output paths; two at once would clobber each other.
     max_active_runs=1,
+    # A task killed by a preemption or restart is retried instead of failing the run.
+    default_args={"retries": 2, "retry_delay": timedelta(minutes=1)},
     tags=["uplift"],
 )
 def uplift_training():
