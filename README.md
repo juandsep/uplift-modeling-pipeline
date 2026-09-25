@@ -19,10 +19,48 @@ evaluation, MLflow tracking and registry, Airflow retraining, FastAPI serving.
 uv sync
 uv run pre-commit install
 uv run python -m uplift_pipeline.train                     # trains and registers the model
-uv run uvicorn uplift_pipeline.serving.app:app --reload    # serves MODEL_URI
+API_KEY=dev-key uv run uvicorn uplift_pipeline.serving.app:app --reload
 uv run pytest
+```
+
+`/predict` requires the `X-API-Key` header:
+
+```bash
+curl -s localhost:8000/predict -H "X-API-Key: dev-key" -H "Content-Type: application/json" \
+  -d '{"records": [{"x1_informative": 0.5, "x2_informative": -1.2}]}'
 ```
 
 macOS: xgboost needs OpenMP (`brew install libomp`).
 
-Settings (env vars): `MLFLOW_TRACKING_URI`, `MLFLOW_EXPERIMENT`, `REGISTERED_MODEL`, `MODEL_URI`.
+Settings (env vars):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `MLFLOW_TRACKING_URI` | `sqlite:///mlflow.db` | Use an authenticated server in prod |
+| `MLFLOW_EXPERIMENT` | `uplift` | |
+| `REGISTERED_MODEL` | `uplift-model` | |
+| `MODEL_URI` | built from the vars below | Explicit model URI; overrides pinning |
+| `MODEL_VERSION` | none | Pinned registry version, e.g. `3` |
+| `ALLOW_UNPINNED_MODEL` | `false` | Local dev only: allow `latest`/stage aliases |
+| `API_KEY` | none | Required by `/predict`; the API returns 503 without it |
+| `MAX_RECORDS` | `1000` | Max rows per request |
+| `MAX_BODY_BYTES` | `1048576` | Max request body |
+
+The API authenticates but does not rate limit. Put it behind an ingress or
+gateway that does, and terminate TLS there. `MLFLOW_TRACKING_USERNAME`,
+`MLFLOW_TRACKING_PASSWORD` and `MLFLOW_TRACKING_TOKEN` are read by MLflow
+directly when the registry requires auth.
+
+## Model pinning
+
+Serving refuses to load a floating alias (`latest`, `staging`): anyone able to
+write to the registry could otherwise swap the model under a live service.
+`mlflow.pyfunc.load_model` deserializes a pickle, so a poisoned registry entry
+means code execution. Train prints the version it registered:
+
+```
+registered uplift-model version 3 (serve it with MODEL_VERSION=3)
+```
+
+Promote by exporting `MODEL_VERSION` from the release pipeline, not by moving
+aliases. `ALLOW_UNPINNED_MODEL=1` is for local dev only.

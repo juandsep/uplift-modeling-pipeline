@@ -5,8 +5,25 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 dist/
+build/
+*.egg-info/
+
+# Secrets never enter the repository.
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local run artifacts.
 mlruns/
 mlartifacts/
 graphify-out/
 mlflow.db
+
+# Editor and OS noise.
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.ipynb_checkpoints/
