@@ -19,6 +19,8 @@ env:
 
 jobs:
   deploy:
+    # Skip until the GCP repository variables exist (see README).
+    if: vars.GCP_PROJECT_ID != ''
     runs-on: ubuntu-latest
     # Requires a protected environment with required reviewers configured in
     # the repository settings, so main is never shipped unattended.
