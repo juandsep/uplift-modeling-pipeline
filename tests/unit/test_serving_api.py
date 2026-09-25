@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from uplift_pipeline import config
 from uplift_pipeline.serving import app as serving
 
-API_KEY = "test-key"
+API_KEY = "test-key"  # pragma: allowlist secret
 HEADERS = {"X-API-Key": API_KEY}
 
 

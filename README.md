@@ -64,4 +64,3 @@ registered uplift-model version 3 (serve it with MODEL_VERSION=3)
 
 Promote by exporting `MODEL_VERSION` from the release pipeline, not by moving
 aliases. `ALLOW_UNPINNED_MODEL=1` is for local dev only.
-
