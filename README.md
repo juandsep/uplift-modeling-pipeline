@@ -5,7 +5,8 @@ changes the chance that a customer converts. It trains an XGBoost T-learner
 with causalml, scores it with Qini and AUUC, tracks runs in MLflow and serves
 predictions through a FastAPI endpoint. Retraining runs weekly on Airflow.
 
-Training data is synthetic for now (`src/uplift_pipeline/data`).
+Training data is synthetic for now (`src/uplift_pipeline/data`); see Data
+below for the real dataset.
 
 ## Project layout
 
@@ -18,6 +19,8 @@ src/uplift_pipeline/
   train.py         train, evaluate, register the model
   serving/app.py   FastAPI app
 dags/              Airflow DAG (weekly retraining)
+infra/             Terraform for the GCP resources
+scripts/           dataset download
 docker/            API image
 tests/             unit and integration tests
 ```
@@ -81,48 +84,54 @@ runs pickled code, so a moving alias would let anyone with registry write
 access change what runs in production. To release a new model, set
 `MODEL_VERSION` to the new version.
 
+## Data
+
+The model will train on the X5 RetailHero uplift dataset: about 200k
+clients from a randomized campaign plus their purchase history (about 45M
+rows). Download it and check the checksums, optionally uploading to GCS:
+
+```bash
+scripts/fetch_x5.sh                         # to data/raw/x5
+scripts/fetch_x5.sh gs://PROJECT-uplift-data  # and to GCS
+```
+
 ## Deploy on GCP
 
-The API runs on Cloud Run and the DAG on Cloud Composer.
+`infra/main.tf` creates the base resources: APIs, the data
+bucket, the Artifact Registry repository, service accounts, Workload
+Identity Federation for GitHub and a monthly budget that unlinks billing
+from the project once spend reaches it (default $15).
+
+```bash
+gcloud auth application-default login
+cd infra
+cp terraform.tfvars.example terraform.tfvars   # set project and billing account
+terraform init
+terraform apply
+terraform output github_variables
+```
+
+Then store the API key (the value never goes through Terraform):
+
+```bash
+printf '%s' "$API_KEY" | gcloud secrets versions add uplift-api-key --data-file=-
+```
 
 ### API (Cloud Run)
 
 The `Deploy` workflow runs on every push to `main`. It builds the image,
 pushes it to Artifact Registry and deploys the `uplift-api` service.
 
-One-time setup:
+One-time setup, after `terraform apply`:
 
-1. Create an Artifact Registry Docker repository.
-2. Set up Workload Identity Federation for this GitHub repository and a
-   deploy service account with `roles/run.admin`,
-   `roles/artifactregistry.writer` and `roles/iam.serviceAccountUser`.
-3. Create a runtime service account for the service with
-   `roles/secretmanager.secretAccessor`.
-4. Store the API key in Secret Manager as `uplift-api-key`.
-5. Add these repository variables in GitHub (Settings > Variables):
-   `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_ARTIFACT_REPO`, `GCP_WIF_PROVIDER`,
-   `GCP_DEPLOY_SA`, `GCP_RUNTIME_SA`, `MLFLOW_TRACKING_URI`, `MODEL_VERSION`.
-6. Create a `production` environment with required reviewers, so deploys
+1. Add the values from `terraform output github_variables` as repository
+   variables in GitHub (Settings > Variables), plus `MLFLOW_TRACKING_URI`
+   and `MODEL_VERSION`.
+2. Create a `production` environment with required reviewers, so deploys
    wait for approval.
 
 The service requires authenticated calls (Cloud Run IAM) on top of the API
 key. Callers need `roles/run.invoker`.
-
-### Training (Cloud Composer)
-
-The Composer environment needs this package installed. Build it and publish
-it to an Artifact Registry Python repository that the environment can
-install from:
-
-```bash
-uv build
-uv publish --publish-url https://REGION-python.pkg.dev/PROJECT/REPO/
-gcloud composer environments update ENV --location REGION \
-  --update-pypi-package "uplift-pipeline==0.1.0" \
-  --update-env-variables MLFLOW_TRACKING_URI=https://your-mlflow-server
-gcloud composer environments storage dags import --environment ENV \
-  --location REGION --source dags/uplift_training_dag.py
-```
 
 ## Contributing
 
