@@ -33,3 +33,4 @@ data/
 infra/.terraform/
 infra/*.tfstate*
 infra/terraform.tfvars
+infra/tfplan

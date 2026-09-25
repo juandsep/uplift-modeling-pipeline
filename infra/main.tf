@@ -1,4 +1,4 @@
-# Base GCP resources: APIs, buckets, image registry, service accounts,
+# Base GCP resources: APIs, data bucket, image registry, service accounts,
 # GitHub Workload Identity Federation and a budget alert.
 # State is local (terraform.tfstate, git-ignored). Move it to a GCS backend
 # if more than one person applies this.
@@ -55,15 +55,13 @@ data "google_project" "this" {}
 resource "google_project_service" "apis" {
   for_each = toset([
     "artifactregistry.googleapis.com",
-    "bigquery.googleapis.com",
     "billingbudgets.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com",
-    "dataproc.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
-    "sqladmin.googleapis.com",
     "storage.googleapis.com",
     "sts.googleapis.com",
   ])
@@ -75,14 +73,6 @@ resource "google_project_service" "apis" {
 
 resource "google_storage_bucket" "data" {
   name                        = "${var.project_id}-uplift-data"
-  location                    = var.region
-  uniform_bucket_level_access = true
-  public_access_prevention    = "enforced"
-  depends_on                  = [google_project_service.apis]
-}
-
-resource "google_storage_bucket" "mlflow" {
-  name                        = "${var.project_id}-mlflow-artifacts"
   location                    = var.region
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
@@ -128,8 +118,7 @@ locals {
   service_accounts = {
     deploy   = "GitHub Actions deploys"
     api      = "Cloud Run API runtime"
-    training = "ETL and training jobs"
-    mlflow   = "MLflow tracking server"
+    training = "ETL and training VMs and jobs"
   }
 }
 
@@ -160,36 +149,15 @@ resource "google_secret_manager_secret_iam_member" "api_reads_key" {
   member    = google_service_account.sa["api"].member
 }
 
-# The API loads models from the artifact store; it never writes.
-resource "google_storage_bucket_iam_member" "api_reads_models" {
-  bucket = google_storage_bucket.mlflow.name
-  role   = "roles/storage.objectViewer"
-  member = google_service_account.sa["api"].member
-}
-
 resource "google_storage_bucket_iam_member" "training_data" {
   bucket = google_storage_bucket.data.name
   role   = "roles/storage.objectAdmin"
   member = google_service_account.sa["training"].member
 }
 
-resource "google_storage_bucket_iam_member" "mlflow_artifacts" {
-  for_each = toset(["training", "mlflow"])
-  bucket   = google_storage_bucket.mlflow.name
-  role     = "roles/storage.objectAdmin"
-  member   = google_service_account.sa[each.key].member
-}
-
-resource "google_project_iam_member" "training" {
-  for_each = toset([
-    "roles/bigquery.jobUser",
-    "roles/bigquery.dataEditor",
-    "roles/dataproc.worker",
-  ])
-  project = var.project_id
-  role    = each.value
-  member  = google_service_account.sa["training"].member
-}
+# MLflow (tracking server and artifact bucket) lives in the shared project,
+# managed by the portfolio-infra repository. It grants the api and training
+# accounts below access there.
 
 # GitHub Workload Identity Federation: no service account keys.
 
@@ -263,10 +231,10 @@ output "data_bucket" {
   value = google_storage_bucket.data.name
 }
 
-output "mlflow_bucket" {
-  value = google_storage_bucket.mlflow.name
-}
-
-output "training_service_account" {
-  value = google_service_account.sa["training"].email
+# Hand these to portfolio-infra so it can grant MLflow access.
+output "mlflow_clients" {
+  value = {
+    api      = google_service_account.sa["api"].email
+    training = google_service_account.sa["training"].email
+  }
 }
