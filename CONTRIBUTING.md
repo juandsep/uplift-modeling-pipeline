@@ -29,9 +29,12 @@ template by adding `?template=release.md` to the compare URL, and list the
 branches it ships.
 
 CI runs on pushes and pull requests targeting both `dev` and `main`. The
-`Deploy` workflow runs only from `main` and is bound to the protected
-`production` environment — configure required reviewers in the repository
-settings, otherwise pushes to `main` ship unattended.
+`Deploy` workflow runs only from `main`, is bound to the protected `production`
+environment and waits for a required reviewer before it touches Cloud Run.
+Branch protection blocks direct pushes to `main`, so a release is always a pull
+request from `dev`. Every action in these workflows is pinned to a full commit
+SHA, and the repository setting `sha_pinning_required` rejects any workflow that
+uses a tag instead.
 
 ## Commits
 
