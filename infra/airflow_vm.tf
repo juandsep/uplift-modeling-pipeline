@@ -113,8 +113,10 @@ resource "google_compute_instance" "airflow" {
   boot_disk {
     initialize_params {
       image = "debian-cloud/debian-12"
-      size  = 30
-      type  = "pd-balanced"
+      # pd-standard: it is billed while the VM is stopped, and boot speed
+      # does not matter for a batch job.
+      size = 20
+      type = "pd-standard"
     }
   }
 
