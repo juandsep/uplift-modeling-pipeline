@@ -61,8 +61,7 @@ project:
 Every boot re-reads the secret, syncs `raw/x5` from the bucket and runs
 `docker compose up`, so `scripts/airflow_vm.sh start` brings everything back.
 The compose file and the DAG travel in the instance metadata: after changing
-them, run `terraform apply` again and restart the VM. The weekly schedule only
-fires while the VM is up. A spot preemption stops the VM and fails the running
+them, run `terraform apply` again and restart the VM. The DAG only runs when triggered. A spot preemption stops the VM and fails the running
 task; start it and trigger again. Boot log:
 `sudo journalctl -u google-startup-scripts` on the VM.
 
@@ -72,7 +71,7 @@ Approximate us-central1 prices; check the pricing pages before relying on them.
 
 - Running: e2-standard-4 spot about $0.04 to $0.05 per hour, plus about
   $0.0025 per hour for the ephemeral external IP.
-- Stopped: only the 30 GB pd-balanced disk, about $3 per month.
+- Stopped: only the 20 GB pd-standard disk, about $0.80 per month.
 - Artifact Registry storage for the image: cents per month. Cloud Build fits
   in its free tier.
 
