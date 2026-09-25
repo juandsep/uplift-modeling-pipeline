@@ -9,28 +9,24 @@ feat/*  chore/*  fix/*  ──►  dev  ──►  main
 - `main` holds released, deployable code. Only `dev` merges into it.
 - `dev` is the integration branch. Nothing lands here except a merge from a
   topic branch.
-- Work happens on short-lived branches cut from `dev`, one per feature:
+- Work happens on short-lived branches cut from `dev`, one per change:
 
 ```bash
 git checkout dev && git pull
 git checkout -b feat/short-description
 # ... work, commit ...
-git checkout dev && git merge --no-ff feat/short-description
-git push origin dev
-git branch -d feat/short-description
+git push -u origin feat/short-description
 ```
+
+Open a pull request into `dev`. The default template asks for a short
+summary, the reason, and how to test. Merge it, then delete the branch.
 
 Prefixes: `feat/` for behavior, `fix/` for defects, `chore/` for tooling and
-documentation. Keep one concern per branch so the merge into `dev` stays
-reviewable.
+documentation. Keep one concern per branch.
 
-Releasing means merging `dev` into `main`:
-
-```bash
-git checkout main && git pull
-git merge --no-ff dev
-git push origin main
-```
+Releasing means a pull request from `dev` into `main`. Use the release
+template by adding `?template=release.md` to the compare URL, and list the
+branches it ships.
 
 CI runs on pushes and pull requests targeting both `dev` and `main`. The
 `Deploy` workflow runs only from `main` and is bound to the protected
