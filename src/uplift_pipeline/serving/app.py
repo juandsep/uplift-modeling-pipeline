@@ -74,6 +74,8 @@ class PredictResponse(BaseModel):
 @lru_cache
 def get_model() -> PyFuncModel:
     config.assert_model_uri_is_pinned(config.MODEL_URI)
+    # The shared MLflow server is IAM-only; the model is loaded once, at startup.
+    config.refresh_mlflow_token(config.MLFLOW_TRACKING_URI)
     mlflow.set_tracking_uri(config.MLFLOW_TRACKING_URI)
     return mlflow.pyfunc.load_model(config.MODEL_URI)
 
@@ -89,6 +91,13 @@ def health() -> dict[str, str]:
     dependencies=[Depends(require_api_key)],
 )
 def predict(req: PredictRequest) -> PredictResponse:
+    empty = [i for i, r in enumerate(req.records) if all(v is None for v in r.values())]
+    if empty:
+        # Some nulls are fine (the model handles NaN); all null carries no signal.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"records with all features null: {empty[:10]}",
+        )
     try:
         uplift = get_model().predict(pd.DataFrame(req.records))
     except RuntimeError:

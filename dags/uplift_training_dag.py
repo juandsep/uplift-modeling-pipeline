@@ -1,4 +1,4 @@
-"""Weekly retraining on X5: ingest -> feature shards -> merge -> train.
+"""Retraining on X5: ingest -> feature shards -> merge -> train.
 
 Pipeline tasks run in /opt/venv, the package's own uv environment (see
 airflow/Dockerfile), through @task.external_python. Only each function's source
@@ -9,7 +9,7 @@ The raw CSVs are not downloaded here: run scripts/fetch_x5.sh first.
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from airflow.sdk import Variable, dag, task
 
@@ -77,27 +77,6 @@ def merge_features(features_dir: str, shards: list[dict[str, int]]) -> str:
 
 @task.external_python(**VENV)
 def train(features_path: str) -> dict[str, float]:
-    import os
-    import urllib.parse
-    import urllib.request
-
-    # MLflow behind Cloud Run IAM needs an identity token, and those expire
-    # after an hour, so one pasted into .env goes stale. On GCE, mint a fresh
-    # one from the VM's service account; elsewhere keep MLFLOW_TRACKING_TOKEN.
-    uri = os.environ.get("MLFLOW_TRACKING_URI", "")
-    if uri.startswith("https://"):
-        req = urllib.request.Request(
-            "http://metadata.google.internal/computeMetadata/v1/instance/"
-            "service-accounts/default/identity?audience="
-            + urllib.parse.quote(uri, safe=""),
-            headers={"Metadata-Flavor": "Google"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                os.environ["MLFLOW_TRACKING_TOKEN"] = resp.read().decode()
-        except OSError:
-            pass  # Not on GCE.
-
     from uplift_pipeline.train import run
 
     # Plain floats: numpy scalars would not unpickle in Airflow's environment.
@@ -105,11 +84,14 @@ def train(features_path: str) -> dict[str, float]:
 
 
 @dag(
-    schedule="@weekly",
+    # The dataset is static: manual triggers only.
+    schedule=None,
     start_date=datetime(2026, 1, 1),
     catchup=False,
     # Runs share the same output paths; two at once would clobber each other.
     max_active_runs=1,
+    # A task killed by a preemption or restart is retried instead of failing the run.
+    default_args={"retries": 2, "retry_delay": timedelta(minutes=1)},
     tags=["uplift"],
 )
 def uplift_training():

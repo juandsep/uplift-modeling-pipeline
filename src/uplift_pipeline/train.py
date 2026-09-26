@@ -45,6 +45,7 @@ def run(
         test_df["y"], test_df["treatment"], model.predict(None, test_df)
     )
 
+    config.refresh_mlflow_token(config.MLFLOW_TRACKING_URI)
     mlflow.set_tracking_uri(config.MLFLOW_TRACKING_URI)
     mlflow.set_experiment(config.EXPERIMENT_NAME)
     version = None
