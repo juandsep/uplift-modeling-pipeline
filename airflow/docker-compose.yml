@@ -35,6 +35,7 @@ x-airflow: &airflow
     MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-sqlite:////opt/airflow/data/mlflow.db}
     MLFLOW_TRACKING_TOKEN: ${MLFLOW_TRACKING_TOKEN:-}
     MLFLOW_EXPERIMENT: ${MLFLOW_EXPERIMENT:-uplift}
+    LEARNERS: ${LEARNERS:-t_xgb,x_xgb,s_xgb}
   volumes:
     - ../dags:/opt/airflow/dags:ro
     - ${UPLIFT_DATA_HOST_DIR:-../data}:/opt/airflow/data
