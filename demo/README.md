@@ -1,9 +1,7 @@
 ---
 title: Uplift Targeting Demo
-sdk: streamlit
-sdk_version: 1.64.0
-python_version: "3.12"
-app_file: app.py
+sdk: docker
+app_port: 8501
 pinned: false
 ---
 
@@ -14,8 +12,7 @@ many extra conversions that brings compared with targeting at random.
 
 The app reads precomputed scores from `scores_sample.parquet` (columns
 `client_id`, `uplift`, `treatment`, `y`). It calls no API and needs no
-credentials. The committed file is a placeholder scored on synthetic data;
-it will be replaced by a sample of the X5 RetailHero scores.
+credentials. The sample holds only clients the model did not train on.
 
 Incremental conversions for the top k% are estimated as the treated minus
 control conversion rate inside that group, times the group size.
@@ -33,6 +30,13 @@ Or with pip:
 ```bash
 pip install -r demo/requirements.txt
 streamlit run demo/app.py
+```
+
+The Space builds `Dockerfile` (Hugging Face no longer offers a Streamlit
+SDK, only Docker). Publish or update it with:
+
+```bash
+hf upload sepulvedajd/uplift-targeting-demo demo . --type space --exclude make_sample.py
 ```
 
 ## Refresh the data
