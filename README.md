@@ -256,5 +256,7 @@ tests/             unit and integration tests
 
 ## Contributing
 
-Work goes on a branch cut from `dev`, is merged into `dev`, and `dev` is
-merged into `main` to release. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Changes go on a `feat/`, `fix/` or `chore/` branch cut from `dev` and merge
+into `dev` through a pull request, which deploys to staging. Merging `dev`
+into `main` releases to production after approval. Details, checks and PR
+templates are in [CONTRIBUTING.md](CONTRIBUTING.md).
