@@ -1,10 +1,16 @@
 """Runtime settings, read from environment variables."""
 
 import os
+import urllib.parse
+import urllib.request
 
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
 EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT", "uplift")
 REGISTERED_MODEL = os.getenv("REGISTERED_MODEL", "uplift-model")
+# Per-client X5 feature table (Parquet). Unset: train on synthetic data.
+FEATURES_PATH = os.getenv("FEATURES_PATH") or None
+# Learners to train and compare (see models.LEARNERS); the best Qini is registered.
+LEARNERS = [s.strip() for s in os.getenv("LEARNERS", "t_xgb,x_xgb").split(",")]
 
 # Serving guardrails. API_KEY is required: the API fails closed without it.
 API_KEY = os.getenv("API_KEY", "")
@@ -51,3 +57,24 @@ def assert_model_uri_is_pinned(uri: str) -> None:
         "model under a running service. Set MODEL_VERSION (e.g. MODEL_VERSION=3), "
         "or ALLOW_UNPINNED_MODEL=1 for local dev."
     )
+
+
+def refresh_mlflow_token(uri: str) -> None:
+    """On GCE or Cloud Run, mint an identity token for the IAM-only MLflow server.
+
+    Tokens expire after an hour, so mint right before talking to MLflow.
+    Elsewhere, MLFLOW_TRACKING_TOKEN is left as is.
+    """
+    if not uri.startswith("https://"):
+        return
+    req = urllib.request.Request(
+        "http://metadata.google.internal/computeMetadata/v1/instance/"
+        "service-accounts/default/identity?audience="
+        + urllib.parse.quote(uri, safe=""),
+        headers={"Metadata-Flavor": "Google"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            os.environ["MLFLOW_TRACKING_TOKEN"] = resp.read().decode()
+    except OSError:
+        pass  # No metadata server: not on GCP.

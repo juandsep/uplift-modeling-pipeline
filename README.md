@@ -3,9 +3,11 @@
 Uplift model that estimates how much a treatment (a campaign, a discount)
 changes the chance that a customer converts. It trains an XGBoost T-learner
 with causalml, scores it with Qini and AUUC, tracks runs in MLflow and serves
-predictions through a FastAPI endpoint. Retraining runs weekly on Airflow.
+predictions through a FastAPI endpoint. An Airflow DAG runs ingestion,
+sharded feature building and training on demand.
 
-Training data is synthetic for now (`src/uplift_pipeline/data`).
+It trains on the X5 RetailHero dataset (see Data below). Without
+`FEATURES_PATH` it falls back to synthetic data, which the tests use.
 
 ## Project layout
 
@@ -16,9 +18,13 @@ src/uplift_pipeline/
   models/          T-learner, saved as an MLflow pyfunc model
   evaluation/      Qini and AUUC
   train.py         train, evaluate, register the model
+  score.py         batch scoring: uplift for every client, highest first
   serving/app.py   FastAPI app
-dags/              Airflow DAG (weekly retraining)
+dags/              Airflow DAG (ingest, features, train, score)
+infra/             Terraform for the GCP resources
+scripts/           dataset download
 docker/            API image
+demo/              static targeting demo on precomputed scores (Hugging Face Space)
 tests/             unit and integration tests
 ```
 
@@ -69,8 +75,11 @@ uv run mypy src
 | `MLFLOW_TRACKING_URI` | `sqlite:///mlflow.db` | MLflow server |
 | `MLFLOW_EXPERIMENT` | `uplift` | Experiment name |
 | `REGISTERED_MODEL` | `uplift-model` | Registry model name |
+| `FEATURES_PATH` | none | X5 feature table (Parquet) to train on; unset uses synthetic data |
+| `LEARNERS` | `t_xgb,x_xgb` | Learners to compare (`t_xgb`, `x_xgb`, `s_xgb`); the best Qini is registered |
 | `MODEL_VERSION` | none | Model version to serve |
 | `MODEL_URI` | none | Full model URI, overrides `MODEL_VERSION` |
+| `SCORES_PATH` | `data/scores/x5/scores.parquet` | Output of `python -m uplift_pipeline.score` |
 | `ALLOW_UNPINNED_MODEL` | `false` | Local only: allow serving `latest` |
 | `API_KEY` | none | Required by `/predict` (sent as `X-API-Key`) |
 | `MAX_RECORDS` | `1000` | Max rows per request |
@@ -81,47 +90,71 @@ runs pickled code, so a moving alias would let anyone with registry write
 access change what runs in production. To release a new model, set
 `MODEL_VERSION` to the new version.
 
+## Data
+
+The model will train on the X5 RetailHero uplift dataset: about 200k
+clients from a randomized campaign plus their purchase history (about 45M
+rows). Download it and check the checksums, optionally uploading to GCS:
+
+```bash
+scripts/fetch_x5.sh                         # to data/raw/x5
+scripts/fetch_x5.sh gs://PROJECT-uplift-data  # and to GCS
+```
+
 ## Deploy on GCP
 
-The API runs on Cloud Run and the DAG on Cloud Composer.
+`infra/main.tf` creates the base resources: APIs, the data
+bucket, the Artifact Registry repository, service accounts, Workload
+Identity Federation for GitHub and a monthly budget that unlinks billing
+from the project once spend reaches it (default $15). `infra/airflow_vm.tf`
+adds an optional spot VM for Airflow, off by default (see `airflow/README.md`).
+
+```bash
+gcloud auth application-default login
+cd infra
+cp terraform.tfvars.example terraform.tfvars   # set project and billing account
+terraform init
+terraform apply
+terraform output github_variables
+```
+
+Then store the API key (the value never goes through Terraform):
+
+```bash
+printf '%s' "$API_KEY" | gcloud secrets versions add uplift-api-key --data-file=-
+```
 
 ### API (Cloud Run)
 
-The `Deploy` workflow runs on every push to `main`. It builds the image,
-pushes it to Artifact Registry and deploys the `uplift-api` service.
+The `Deploy` workflow builds the image, pushes it to Artifact Registry and
+deploys it to Cloud Run:
 
-One-time setup:
+| Branch | GitHub environment | Service | API key secret |
+|---|---|---|---|
+| `dev` | `staging` (no approval) | `uplift-api-staging` | `uplift-api-key-staging` |
+| `main`, `v*` tags | `production` (reviewer approval) | `uplift-api` | `uplift-api-key` |
 
-1. Create an Artifact Registry Docker repository.
-2. Set up Workload Identity Federation for this GitHub repository and a
-   deploy service account with `roles/run.admin`,
-   `roles/artifactregistry.writer` and `roles/iam.serviceAccountUser`.
-3. Create a runtime service account for the service with
-   `roles/secretmanager.secretAccessor`.
-4. Store the API key in Secret Manager as `uplift-api-key`.
-5. Add these repository variables in GitHub (Settings > Variables):
-   `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_ARTIFACT_REPO`, `GCP_WIF_PROVIDER`,
-   `GCP_DEPLOY_SA`, `GCP_RUNTIME_SA`, `MLFLOW_TRACKING_URI`, `MODEL_VERSION`.
-6. Create a `production` environment with required reviewers, so deploys
-   wait for approval.
+Both scale to zero. Every merge into `dev` lands on staging first; releasing
+`dev` into `main` ships the same code to production once approved.
 
-The service requires authenticated calls (Cloud Run IAM) on top of the API
-key. Callers need `roles/run.invoker`.
+One-time setup, after `terraform apply`:
 
-### Training (Cloud Composer)
+1. Add the values from `terraform output github_variables` as repository
+   variables in GitHub (Settings > Variables), plus `MLFLOW_TRACKING_URI`.
+2. Create the `staging` (branch `dev`) and `production` (branch `main`, tags
+   `v*`, required reviewers) environments, each with a `MODEL_VERSION`
+   variable, so staging can try a new model before production.
+3. Store an API key in each secret without echoing it:
+   `openssl rand -hex 24 | tr -d '\n' | gcloud secrets versions add uplift-api-key-staging --data-file=-`
 
-The Composer environment needs this package installed. Build it and publish
-it to an Artifact Registry Python repository that the environment can
-install from:
+The services require authenticated calls (Cloud Run IAM) on top of the API
+key. Callers need `roles/run.invoker`:
 
 ```bash
-uv build
-uv publish --publish-url https://REGION-python.pkg.dev/PROJECT/REPO/
-gcloud composer environments update ENV --location REGION \
-  --update-pypi-package "uplift-pipeline==0.1.0" \
-  --update-env-variables MLFLOW_TRACKING_URI=https://your-mlflow-server
-gcloud composer environments storage dags import --environment ENV \
-  --location REGION --source dags/uplift_training_dag.py
+curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "X-API-Key: $(gcloud secrets versions access latest --secret uplift-api-key-staging)" \
+  -H "Content-Type: application/json" -d @request.json \
+  https://uplift-api-staging-326985451793.us-central1.run.app/predict
 ```
 
 ## Contributing

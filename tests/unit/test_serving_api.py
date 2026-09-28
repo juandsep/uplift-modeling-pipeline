@@ -69,6 +69,13 @@ def test_predict_succeeds_with_key(client):
     assert len(resp.json()["uplift"]) == 2
 
 
+def test_predict_rejects_all_null_record(client):
+    records = [{"x": 1.0, "z": None}, {"x": None, "z": None}]
+    resp = client.post("/predict", json={"records": records}, headers=HEADERS)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "records with all features null: [1]"
+
+
 def test_internal_error_does_not_leak_schema(client, monkeypatch):
     leaked = "x1_informative"
     monkeypatch.setattr(serving, "get_model", lambda: StubModel(KeyError(leaked)))
