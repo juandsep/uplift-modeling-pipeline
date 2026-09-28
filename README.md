@@ -64,10 +64,10 @@ if spend reaches $15 in a month.
 The Airflow DAG `uplift_training` is triggered by hand (the dataset is
 static):
 
-1. `ingest`: DuckDB converts the raw CSVs to Parquet, purchases partitioned
-   by month (45.8M rows in about 16 s).
-2. `features_shard`: builds 30 per-client features, split into 8 shards by
-   `hash(client_id) % N` that run in parallel.
+1. `ingest`: DuckDB converts the raw CSVs to Parquet (45.8M purchase rows),
+   purchases partitioned by client shard `hash(client_id) % N`, then month.
+2. `features_shard`: builds 30 per-client features in N = 8 shards that run in
+   parallel, each reading only its own purchases.
 3. `merge_features`: joins the shards with the treatment flag and the label.
 4. `train`: fits every learner in `LEARNERS` on one shared split, logs one
    MLflow run per learner with its Qini curve, and registers the best one.
@@ -223,7 +223,7 @@ uv run mypy src
 | `MLFLOW_EXPERIMENT` | `uplift` | Experiment name |
 | `REGISTERED_MODEL` | `uplift-model` | Registry model name |
 | `FEATURES_PATH` | none | X5 feature table (Parquet) to train on; unset uses synthetic data |
-| `LEARNERS` | `t_xgb,x_xgb` | Learners to compare (`t_xgb`, `x_xgb`, `s_xgb`); the best Qini is registered |
+| `LEARNERS` | `t_xgb,x_xgb,s_xgb` | Learners to compare (`t_xgb`, `x_xgb`, `s_xgb`); the best Qini is registered |
 | `MODEL_VERSION` | none | Model version to serve |
 | `MODEL_URI` | none | Full model URI, overrides `MODEL_VERSION` |
 | `SCORES_PATH` | `data/scores/x5/scores.parquet` | Output of `python -m uplift_pipeline.score` |
