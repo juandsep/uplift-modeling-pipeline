@@ -1,32 +1,140 @@
 # uplift-pipeline
 
-Uplift model that estimates how much a treatment (a campaign, a discount)
-changes the chance that a customer converts. It trains an XGBoost T-learner
-with causalml, scores it with Qini and AUUC, tracks runs in MLflow and serves
-predictions through a FastAPI endpoint. An Airflow DAG runs ingestion,
-sharded feature building and training on demand.
+A marketing campaign converts some customers who would never have bought
+without it, and wastes money on others who would have bought anyway. An
+uplift model estimates, for each customer, how much the campaign changes
+their chance to buy, so the budget goes to the people it actually moves.
 
-It trains on the X5 RetailHero dataset (see Data below). Without
-`FEATURES_PATH` it falls back to synthetic data, which the tests use.
+This repository builds that model end to end on a real dataset, as a
+portfolio project to practice the full MLOps loop on a small budget:
+data ingestion, parallel feature building, causal ML, experiment tracking,
+a model registry, batch scoring, an online API, CI/CD and infrastructure as
+code on GCP.
 
-## Project layout
+- **Data:** X5 RetailHero, about 200k clients from a randomized campaign and
+  45.8M purchase rows.
+- **Model:** T, X and S meta-learners on XGBoost (causalml), compared by Qini.
+- **Stack:** DuckDB, Airflow 3, MLflow, FastAPI, Cloud Run, GCS, Terraform,
+  GitHub Actions.
+- **Demo:** [uplift targeting demo](https://huggingface.co/spaces/sepulvedajd/uplift-targeting-demo)
+  (static page on held-out clients).
 
+## Results
+
+On the same 30% test split of X5:
+
+| Learner | Qini | AUUC |
+|---|---|---|
+| T-learner (XGBoost) | 0.111 | 0.612 |
+| X-learner (XGBoost) | 0.142 | 0.643 |
+| S-learner (XGBoost) | **0.169** | **0.671** |
+
+The S-learner is registered as `uplift-model` version 2 and served. On a
+20k-client held-out sample, targeting the top 20% by predicted uplift brings
+about 272 extra conversions, against 133 when the same number of clients is
+picked at random.
+
+## Architecture
+
+![Architecture on GCP](docs/diagrams/architecture.png)
+
+Two GCP projects. `uplift-pipeline` holds this product: the data bucket, the
+Airflow VM, the images and the API. `jd-portfolio-shared` holds what several
+portfolio projects share: the MLflow server and its artifact bucket, with
+metadata in a free Neon Postgres database.
+
+| Component | What it does | Runs on |
+|---|---|---|
+| Data bucket | Raw X5 CSVs in, batch scores out | GCS |
+| Airflow 3 | Runs the training DAG | Docker Compose on a spot VM that stops itself after 30 idle minutes |
+| MLflow server | Tracks runs, holds the model registry | Cloud Run, IAM only, scales to zero |
+| Artifact bucket | Model files (`python_model.pkl`, `MLmodel`, requirements) | GCS |
+| uplift-api | FastAPI, `POST /predict` for one to 1000 clients | Cloud Run, scales to zero |
+| Artifact Registry | API and Airflow images | GCP |
+| GitHub Actions | CI on every PR, deploys `dev` to staging and `main` to production | GitHub |
+| Demo page | Top-k targeting simulator on precomputed scores | Hugging Face static Space |
+
+Nothing bills while idle, and a budget guard unlinks billing from the project
+if spend reaches $15 in a month.
+
+## Training pipeline
+
+![Training DAG](docs/diagrams/pipeline.png)
+
+The Airflow DAG `uplift_training` is triggered by hand (the dataset is
+static):
+
+1. `ingest`: DuckDB converts the raw CSVs to Parquet, purchases partitioned
+   by month (45.8M rows in about 16 s).
+2. `features_shard`: builds 30 per-client features, split into 8 shards by
+   `hash(client_id) % N` that run in parallel.
+3. `merge_features`: joins the shards with the treatment flag and the label.
+4. `train`: fits every learner in `LEARNERS` on one shared split, logs one
+   MLflow run per learner with its Qini curve, and registers the best one.
+5. `score`: scores every client with the version just registered and writes
+   `scores.parquet` (with a `split` column marking held-out clients) to GCS.
+
+A full run takes about 5 minutes on an e2-standard-4 spot VM.
+
+## Serving
+
+![First predict request](docs/diagrams/predict.png)
+
+The API serves one fixed model version (`MODEL_VERSION`), never `latest`.
+Loading a model runs pickled code, so a moving alias would let anyone with
+registry write access change what runs in production. The model is loaded on
+the first request of an instance and kept in memory.
+
+Two checks guard `/predict`: Cloud Run IAM (the caller needs
+`roles/run.invoker`) and the `X-API-Key` header.
+
+### Try the API
+
+`gcloud run services proxy` opens a local port that forwards requests with
+your gcloud identity, so the interactive docs work in the browser:
+
+```bash
+gcloud run services proxy uplift-api-staging --region us-central1 --port 8080
 ```
-src/uplift_pipeline/
-  config.py        settings from environment variables
-  data/            data loading
-  models/          T-learner, saved as an MLflow pyfunc model
-  evaluation/      Qini and AUUC
-  train.py         train, evaluate, register the model
-  score.py         batch scoring: uplift for every client, highest first
-  serving/app.py   FastAPI app
-dags/              Airflow DAG (ingest, features, train, score)
-infra/             Terraform for the GCP resources
-scripts/           dataset download
-docker/            API image
-demo/              static targeting demo on precomputed scores (Hugging Face Space)
-tests/             unit and integration tests
+
+The first time, gcloud installs the `cloud-run-proxy` component; run the
+command again if it exits after installing. The first request after a cold
+start can take a minute while the model loads.
+
+Open http://localhost:8080/docs, click "Authorize" and paste the staging key
+(`gcloud secrets versions access latest --secret uplift-api-key-staging`).
+Each record needs the 30 features the model was trained on. To build a
+request from the local feature table:
+
+```bash
+uv run python -c "
+import json
+from uplift_pipeline.data import load_x5_features
+df, features = load_x5_features('data/features/x5/client_features.parquet')
+print(json.dumps({'records': json.loads(df[features].head(3).to_json(orient='records'))}))
+" > request.json
+
+curl -s localhost:8080/predict -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" -d @request.json
+# {"uplift":[0.0178,0.0078,0.0414]}
 ```
+
+## Model tracking and retraining
+
+Every training run creates one parent MLflow run in the `uplift` experiment
+(dataset, learners, Qini and AUUC of each, overlaid Qini curves) and one
+child run per learner (metrics, fit time, its curve and the model). Only the
+best learner is registered. To browse it:
+
+```bash
+gcloud run services proxy mlflow --region us-central1 --project jd-portfolio-shared
+```
+
+X5 does not change, so retraining it gives the same model. With live data,
+retrain when a new campaign with a random control group closes, when the
+Qini measured on that control group drops, or when feature drift (PSI above
+0.2) shows the clients have changed. Release a new model by setting
+`MODEL_VERSION` in the staging environment first, then in production.
 
 ## Run locally
 
@@ -38,35 +146,74 @@ uv sync
 uv run pre-commit install
 ```
 
-Train and register a model. It prints the version it registered:
+Without `FEATURES_PATH` the code trains on synthetic data, which the tests
+also use. Train and register a model, then serve the version it prints:
 
 ```bash
 uv run python -m uplift_pipeline.train
 # registered uplift-model version 1 (serve it with MODEL_VERSION=1)
-```
-
-Start the API with that version:
-
-```bash
 MODEL_VERSION=1 API_KEY=dev-key uv run uvicorn uplift_pipeline.serving.app:app --reload
 ```
 
-Each record must include every feature the model was trained on
-(`x1_informative` ... `x13_increase_mix` with the synthetic data):
+To run the full pipeline on X5 with Airflow on your machine, see
+[airflow/README.md](airflow/README.md).
 
-```bash
-curl -s localhost:8000/predict \
-  -H "X-API-Key: dev-key" -H "Content-Type: application/json" \
-  -d @request.json
-```
-
-Run the checks:
+Checks:
 
 ```bash
 uv run pytest
 uv run pre-commit run --all-files
 uv run mypy src
 ```
+
+## Reproduce on GCP
+
+1. Download the data and upload it:
+
+   ```bash
+   scripts/fetch_x5.sh gs://PROJECT-uplift-data
+   ```
+
+2. Create the infrastructure. `infra/main.tf` creates the APIs, the data
+   bucket, the Artifact Registry repository, service accounts, Workload
+   Identity Federation for GitHub and the budget guard. `infra/airflow_vm.tf`
+   adds the Airflow VM, off by default.
+
+   ```bash
+   gcloud auth application-default login
+   cd infra
+   cp terraform.tfvars.example terraform.tfvars   # set project and billing account
+   terraform init
+   terraform apply -var airflow_vm_enabled=true
+   terraform output github_variables
+   ```
+
+3. Configure GitHub: add the values from `terraform output github_variables`
+   plus `MLFLOW_TRACKING_URI` as repository variables, then create the
+   `staging` (branch `dev`) and `production` (branch `main`, tags `v*`,
+   required reviewers) environments, each with a `MODEL_VERSION` variable.
+
+4. Store one API key per environment without echoing it:
+
+   ```bash
+   openssl rand -hex 24 | tr -d '\n' | gcloud secrets versions add uplift-api-key-staging --data-file=-
+   openssl rand -hex 24 | tr -d '\n' | gcloud secrets versions add uplift-api-key --data-file=-
+   ```
+
+5. Build the Airflow image and train:
+
+   ```bash
+   gcloud builds submit --config airflow/cloudbuild.yaml .
+   scripts/airflow_vm.sh start
+   scripts/airflow_vm.sh trigger
+   ```
+
+6. Set `MODEL_VERSION` in the `staging` environment to the registered
+   version. Every merge into `dev` deploys `uplift-api-staging`; merging `dev`
+   into `main` deploys `uplift-api` after a reviewer approves it.
+
+7. Refresh and publish the demo from the new scores
+   ([demo/README.md](demo/README.md)).
 
 ## Configuration
 
@@ -85,79 +232,31 @@ uv run mypy src
 | `MAX_RECORDS` | `1000` | Max rows per request |
 | `MAX_BODY_BYTES` | `1048576` | Max request size |
 
-The API only serves a fixed model version, never `latest`. Loading a model
-runs pickled code, so a moving alias would let anyone with registry write
-access change what runs in production. To release a new model, set
-`MODEL_VERSION` to the new version.
+## Project layout
 
-## Data
-
-The model will train on the X5 RetailHero uplift dataset: about 200k
-clients from a randomized campaign plus their purchase history (about 45M
-rows). Download it and check the checksums, optionally uploading to GCS:
-
-```bash
-scripts/fetch_x5.sh                         # to data/raw/x5
-scripts/fetch_x5.sh gs://PROJECT-uplift-data  # and to GCS
 ```
-
-## Deploy on GCP
-
-`infra/main.tf` creates the base resources: APIs, the data
-bucket, the Artifact Registry repository, service accounts, Workload
-Identity Federation for GitHub and a monthly budget that unlinks billing
-from the project once spend reaches it (default $15). `infra/airflow_vm.tf`
-adds an optional spot VM for Airflow, off by default (see `airflow/README.md`).
-
-```bash
-gcloud auth application-default login
-cd infra
-cp terraform.tfvars.example terraform.tfvars   # set project and billing account
-terraform init
-terraform apply
-terraform output github_variables
-```
-
-Then store the API key (the value never goes through Terraform):
-
-```bash
-printf '%s' "$API_KEY" | gcloud secrets versions add uplift-api-key --data-file=-
-```
-
-### API (Cloud Run)
-
-The `Deploy` workflow builds the image, pushes it to Artifact Registry and
-deploys it to Cloud Run:
-
-| Branch | GitHub environment | Service | API key secret |
-|---|---|---|---|
-| `dev` | `staging` (no approval) | `uplift-api-staging` | `uplift-api-key-staging` |
-| `main`, `v*` tags | `production` (reviewer approval) | `uplift-api` | `uplift-api-key` |
-
-Both scale to zero. Every merge into `dev` lands on staging first; releasing
-`dev` into `main` ships the same code to production once approved.
-
-One-time setup, after `terraform apply`:
-
-1. Add the values from `terraform output github_variables` as repository
-   variables in GitHub (Settings > Variables), plus `MLFLOW_TRACKING_URI`.
-2. Create the `staging` (branch `dev`) and `production` (branch `main`, tags
-   `v*`, required reviewers) environments, each with a `MODEL_VERSION`
-   variable, so staging can try a new model before production.
-3. Store an API key in each secret without echoing it:
-   `openssl rand -hex 24 | tr -d '\n' | gcloud secrets versions add uplift-api-key-staging --data-file=-`
-
-The services require authenticated calls (Cloud Run IAM) on top of the API
-key. Callers need `roles/run.invoker`:
-
-```bash
-curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-  -H "X-API-Key: $(gcloud secrets versions access latest --secret uplift-api-key-staging)" \
-  -H "Content-Type: application/json" -d @request.json \
-  https://uplift-api-staging-326985451793.us-central1.run.app/predict
+src/uplift_pipeline/
+  config.py        settings from environment variables
+  data/            X5 ingestion and loading, synthetic data
+  features/        per-client X5 features in hash shards
+  models/          T, X and S learners, saved as an MLflow pyfunc model
+  evaluation/      Qini, AUUC and Qini curves
+  train.py         train, compare, register the best learner
+  score.py         batch scoring: uplift for every client, highest first
+  serving/app.py   FastAPI app
+dags/              Airflow DAG (ingest, features, train, score)
+airflow/           Docker Compose stack and image for Airflow
+infra/             Terraform for the GCP resources
+scripts/           dataset download, Airflow VM helper
+docker/            API image
+demo/              static targeting demo (Hugging Face Space)
+docs/diagrams/     diagram sources (Archify JSON) and images
+tests/             unit and integration tests
 ```
 
 ## Contributing
 
-Work goes on a branch cut from `dev`, is merged into `dev`, and `dev` is
-merged into `main` to release. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Changes go on a `feat/`, `fix/` or `chore/` branch cut from `dev` and merge
+into `dev` through a pull request, which deploys to staging. Merging `dev`
+into `main` releases to production after approval. Details, checks and PR
+templates are in [CONTRIBUTING.md](CONTRIBUTING.md).
