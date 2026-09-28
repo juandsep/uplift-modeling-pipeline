@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "First POST /predict after a cold start",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1000,
+      560
+    ],
+    "column_fit": "spread"
+  },
+  "participants": [
+    {
+      "id": "caller",
+      "type": "external",
+      "label": "Caller",
+      "sublabel": "gcloud identity"
+    },
+    {
+      "id": "iam",
+      "type": "security",
+      "label": "Cloud Run IAM",
+      "sublabel": "run.invoker"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "uplift-api",
+      "sublabel": "FastAPI"
+    },
+    {
+      "id": "mlflow",
+      "type": "backend",
+      "label": "MLflow server",
+      "sublabel": "registry"
+    },
+    {
+      "id": "bucket",
+      "type": "cloud",
+      "label": "Artifact bucket",
+      "sublabel": "GCS"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 250,
+      "label": "Authenticate"
+    },
+    {
+      "from": 260,
+      "to": 400,
+      "label": "Load pinned model once"
+    },
+    {
+      "from": 410,
+      "to": 480,
+      "label": "Predict"
+    }
+  ],
+  "messages": [
+    {
+      "id": "request",
+      "from": "caller",
+      "to": "iam",
+      "y": 170,
+      "label": "POST /predict + ID token",
+      "variant": "security"
+    },
+    {
+      "id": "forward",
+      "from": "iam",
+      "to": "api",
+      "y": 200,
+      "label": "invoker allowed",
+      "variant": "emphasis"
+    },
+    {
+      "id": "resolve",
+      "from": "api",
+      "to": "mlflow",
+      "y": 280,
+      "label": "models:/uplift-model/2",
+      "variant": "emphasis"
+    },
+    {
+      "id": "uri",
+      "from": "mlflow",
+      "to": "api",
+      "y": 310,
+      "label": "artifact URI",
+      "variant": "return"
+    },
+    {
+      "id": "download",
+      "from": "api",
+      "to": "bucket",
+      "y": 345,
+      "label": "read python_model.pkl",
+      "variant": "emphasis"
+    },
+    {
+      "id": "files",
+      "from": "bucket",
+      "to": "api",
+      "y": 375,
+      "label": "model files",
+      "variant": "return"
+    },
+    {
+      "id": "response",
+      "from": "api",
+      "to": "caller",
+      "y": 440,
+      "label": "200 {uplift: [...]}",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "iam",
+      "from": 165,
+      "to": 205,
+      "type": "security"
+    },
+    {
+      "participant": "api",
+      "from": 195,
+      "to": 445,
+      "type": "backend"
+    },
+    {
+      "participant": "mlflow",
+      "from": 275,
+      "to": 315,
+      "type": "backend"
+    },
+    {
+      "participant": "bucket",
+      "from": 340,
+      "to": 380,
+      "type": "cloud"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Model loading",
+      "items": [
+        "Only on the first request of an instance",
+        "Cached in memory afterwards (lru_cache)",
+        "Never latest: a floating alias is refused"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Two locks",
+      "items": [
+        "Cloud Run IAM rejects callers without run.invoker",
+        "The app rejects a wrong X-API-Key with 401",
+        "Internal errors are logged, never echoed"
+      ]
+    }
+  ]
+}

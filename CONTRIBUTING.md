@@ -29,8 +29,9 @@ template by adding `?template=release.md` to the compare URL, and list the
 branches it ships.
 
 CI runs on pushes and pull requests targeting both `dev` and `main`. The
-`Deploy` workflow runs only from `main`, is bound to the protected `production`
-environment and waits for a required reviewer before it touches Cloud Run.
+`Deploy` workflow runs on both: `dev` deploys `uplift-api-staging` through the
+`staging` environment with no approval, and `main` deploys `uplift-api` through
+the protected `production` environment, which waits for a required reviewer.
 Branch protection blocks direct pushes to `main`, so a release is always a pull
 request from `dev`. Every action in these workflows is pinned to a full commit
 SHA, and the repository setting `sha_pinning_required` rejects any workflow that

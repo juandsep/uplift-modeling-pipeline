@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Uplift pipeline on GCP",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "x5", "type": "external", "label": "X5 RetailHero", "sublabel": "public dataset", "pos": [40, 100], "size": [150, 64] },
+    { "id": "data", "type": "cloud", "label": "Data bucket", "sublabel": "GCS raw / scores", "pos": [290, 100], "size": [150, 64] },
+    { "id": "vm", "type": "backend", "label": "Airflow 3", "sublabel": "spot VM, DAG", "pos": [540, 100], "size": [150, 64], "tag": "stops when idle" },
+    { "id": "mlflow", "type": "backend", "label": "MLflow server", "sublabel": "Cloud Run", "pos": [790, 100], "size": [150, 64], "tag": "IAM only" },
+    { "id": "neon", "type": "database", "label": "Neon Postgres", "sublabel": "runs + registry", "pos": [1040, 100], "size": [150, 64] },
+    { "id": "demo", "type": "frontend", "label": "Demo page", "sublabel": "HF static Space", "pos": [40, 300], "size": [150, 64] },
+    { "id": "ar", "type": "cloud", "label": "Artifact Registry", "sublabel": "API + Airflow images", "pos": [290, 300], "size": [150, 64] },
+    { "id": "api", "type": "backend", "label": "uplift-api", "sublabel": "FastAPI, Cloud Run", "pos": [540, 300], "size": [150, 64], "tag": "pinned version" },
+    { "id": "artifacts", "type": "cloud", "label": "Artifact bucket", "sublabel": "GCS model files", "pos": [790, 300], "size": [150, 64] },
+    { "id": "gha", "type": "external", "label": "GitHub Actions", "sublabel": "CI + Deploy", "pos": [290, 480], "size": [150, 64] },
+    { "id": "caller", "type": "security", "label": "Caller", "sublabel": "run.invoker", "pos": [540, 480], "size": [150, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "GCP project uplift-pipeline", "wraps": ["data", "vm", "ar", "api"] },
+    { "kind": "region", "label": "GCP project jd-portfolio-shared", "wraps": ["mlflow", "artifacts"] }
+  ],
+  "connections": [
+    { "id": "fetch", "from": "x5", "to": "data", "label": "fetch_x5.sh" },
+    { "id": "train-io", "from": "data", "to": "vm", "label": "CSV in, scores out", "variant": "emphasis" },
+    { "id": "log", "from": "vm", "to": "mlflow", "label": "log + register", "variant": "emphasis" },
+    { "id": "meta", "from": "mlflow", "to": "neon", "label": "metadata" },
+    { "id": "files", "from": "mlflow", "to": "artifacts", "label": "artifact root", "labelDy": 24 },
+    { "id": "resolve", "from": "api", "to": "mlflow", "label": "models:/uplift-model/2" },
+    { "id": "sample", "from": "data", "to": "demo", "label": "sample CSV", "variant": "dashed" },
+    { "id": "build", "from": "gha", "to": "ar", "label": "build image" },
+    { "id": "deploy", "from": "ar", "to": "api", "label": "deploy" },
+    { "id": "predict", "from": "caller", "to": "api", "label": "POST /predict", "variant": "security" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Training", "items": ["Airflow DAG on a spot VM, manual trigger", "Best learner by Qini is registered in MLflow", "Every client scored and written to GCS"] },
+    { "dot": "cyan", "title": "Serving", "items": ["FastAPI on Cloud Run, scales to zero", "Loads one pinned MODEL_VERSION on first use", "Cloud Run IAM plus X-API-Key"] },
+    { "dot": "amber", "title": "Cost", "items": ["Nothing bills while idle", "Budget guard unlinks billing at $15", "Demo is a free static page"] }
+  ]
+}
