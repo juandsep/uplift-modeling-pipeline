@@ -97,6 +97,10 @@ your gcloud identity, so the interactive docs work in the browser:
 gcloud run services proxy uplift-api-staging --region us-central1 --port 8080
 ```
 
+The first time, gcloud installs the `cloud-run-proxy` component; run the
+command again if it exits after installing. The first request after a cold
+start can take a minute while the model loads.
+
 Open http://localhost:8080/docs, click "Authorize" and paste the staging key
 (`gcloud secrets versions access latest --secret uplift-api-key-staging`).
 Each record needs the 30 features the model was trained on. To build a
