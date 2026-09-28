@@ -36,3 +36,4 @@ infra/*.tfstate*
 infra/terraform.tfvars
 infra/tfplan
 .claude/worktrees/
+monitoring/model/
