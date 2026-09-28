@@ -56,6 +56,9 @@ def main() -> None:
     missing = set(COLUMNS) - set(df.columns)
     if missing:
         raise SystemExit(f"missing columns: {sorted(missing)}")
+    if "split" in df.columns:
+        # Training rows would overstate the gain: keep the held-out clients only.
+        df = df[df["split"] == "test"]
     df = df[COLUMNS].astype(
         {"client_id": str, "uplift": "float32", "treatment": "int8", "y": "int8"}
     )
