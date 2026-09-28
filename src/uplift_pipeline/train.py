@@ -9,6 +9,7 @@ from sklearn.model_selection import train_test_split
 
 from uplift_pipeline import config
 from uplift_pipeline.data import load_training_data, load_x5_features
+from uplift_pipeline.drift import profile
 from uplift_pipeline.evaluation import COLORS, plot_qini, qini_curve, uplift_metrics
 from uplift_pipeline.models import LEARNERS, UpliftModel
 
@@ -106,6 +107,12 @@ def run(
                     else None,
                 )
                 if name == best:
+                    # What drift checks compare live batches against.
+                    reference = profile(train_df, features)
+                    reference |= profile(
+                        pd.DataFrame({"uplift": uplifts[name]}), ["uplift"]
+                    )
+                    mlflow.log_dict(reference, "reference_profile.json")
                     version = registered_version(child.info.run_id)
                     if version is not None:
                         mlflow.set_tag("registered_version", version)

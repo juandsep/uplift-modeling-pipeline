@@ -167,6 +167,26 @@ uv run python -m uplift_pipeline.simulate covariate --n 10000 \
   --send http://localhost:8080 --api-key "$KEY" --out covariate.parquet
 ```
 
+### Drift checks
+
+Training logs `reference_profile.json` next to the registered model: decile
+edges and shares of every feature (null as its own bin) and of the predicted
+uplift. `python -m uplift_pipeline.drift REFERENCE CURRENT` compares a batch
+against it and can push the result to a Prometheus Pushgateway. On the
+scenarios above:
+
+| Scenario | Features with PSI > 0.2 | Uplift PSI | Lift in top 20% |
+|---|---|---|---|
+| baseline | none | 0.00 | +0.120 |
+| covariate | age, mean_spend, max_spend | 0.02 | +0.120 |
+| missing | the 5 nulled features | 0.40 | +0.111 |
+| concept | none | 0.00 | -0.019 |
+
+```bash
+uv run python -m uplift_pipeline.drift reference_profile.json covariate.parquet \
+  --pushgateway localhost:9091 --window covariate
+```
+
 ## Run locally
 
 Requires [uv](https://docs.astral.sh/uv/). On macOS, xgboost also needs
