@@ -23,6 +23,7 @@ dags/              Airflow DAG (ingest, features, train)
 infra/             Terraform for the GCP resources
 scripts/           dataset download
 docker/            API image
+demo/              Streamlit targeting demo on precomputed scores (Hugging Face Space)
 tests/             unit and integration tests
 ```
 
