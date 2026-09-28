@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Training DAG: uplift_training",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1070,
+      640
+    ]
+  },
+  "stages": [
+    {
+      "label": "Raw data"
+    },
+    {
+      "label": "Ingest"
+    },
+    {
+      "label": "Features"
+    },
+    {
+      "label": "Train + register"
+    },
+    {
+      "label": "Score + consume"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "raw",
+      "type": "database",
+      "label": "X5 raw CSVs",
+      "sublabel": "647 MB",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "ingest",
+      "type": "backend",
+      "label": "ingest",
+      "sublabel": "DuckDB to Parquet",
+      "stage": 1,
+      "row": 0,
+      "tag": "skips if done"
+    },
+    {
+      "id": "shards",
+      "type": "backend",
+      "label": "features_shard",
+      "sublabel": "8 mapped tasks",
+      "stage": 2,
+      "row": 0,
+      "tag": "hash(client_id) % N"
+    },
+    {
+      "id": "merge",
+      "type": "database",
+      "label": "merge_features",
+      "sublabel": "30 features + labels",
+      "stage": 2,
+      "row": 2
+    },
+    {
+      "id": "train",
+      "type": "backend",
+      "label": "train",
+      "sublabel": "T, X, S learners",
+      "stage": 3,
+      "row": 0,
+      "tag": "best Qini wins"
+    },
+    {
+      "id": "registry",
+      "type": "database",
+      "label": "MLflow registry",
+      "sublabel": "uplift-model v2",
+      "stage": 3,
+      "row": 3
+    },
+    {
+      "id": "score",
+      "type": "backend",
+      "label": "score",
+      "sublabel": "200k clients",
+      "stage": 4,
+      "row": 0,
+      "tag": "copied to GCS"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "uplift-api",
+      "sublabel": "POST /predict",
+      "stage": 4,
+      "row": 3
+    },
+    {
+      "id": "demo",
+      "type": "frontend",
+      "label": "Demo page",
+      "sublabel": "held-out sample",
+      "stage": 4,
+      "row": 1
+    }
+  ],
+  "flows": [
+    {
+      "from": "raw",
+      "to": "ingest",
+      "label": "45.8M purchase rows",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "ingest",
+      "to": "shards",
+      "label": "Parquet by month",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "shards",
+      "to": "merge",
+      "label": "one file per shard",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "from": "merge",
+      "to": "train",
+      "label": "client_features",
+      "variant": "emphasis"
+    },
+    {
+      "from": "train",
+      "to": "registry",
+      "label": "register best",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "from": "registry",
+      "to": "score",
+      "label": "pinned version",
+      "variant": "emphasis"
+    },
+    {
+      "from": "registry",
+      "to": "api",
+      "label": "MODEL_VERSION",
+      "route": "straight",
+      "labelDy": 32
+    },
+    {
+      "from": "score",
+      "to": "demo",
+      "label": "make_sample.py",
+      "variant": "dashed",
+      "labelDy": 24
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Tasks",
+      "items": [
+        "Each task runs in the package's own venv",
+        "Only paths and small dicts cross XCom",
+        "Retries cover spot VM preemptions"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Model",
+      "items": [
+        "One shared 70/30 split for every learner",
+        "Metrics: Qini, AUUC, ATE vs mean uplift",
+        "Scores mark the held-out clients"
+      ]
+    }
+  ]
+}
