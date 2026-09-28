@@ -28,21 +28,24 @@ VENV = {
 
 
 @task.external_python(**VENV)
-def ingest(data_dir: str) -> str:
+def ingest(data_dir: str, shards: list[dict[str, int]]) -> str:
     from pathlib import Path
 
     from uplift_pipeline.data.x5 import convert_x5
 
     raw, out = Path(data_dir, "raw/x5"), Path(data_dir, "processed/x5")
+    # Purchases are bucketed by shard, so a new shard count means a new ingest.
+    num_shards = len(shards)
     # A marker, not the Parquet files: a crash mid-write must not look done.
     done = out / "_SUCCESS"
-    if done.exists():
-        print(f"{out} already converted, skipping")
+    if done.exists() and done.read_text() == str(num_shards):
+        print(f"{out} already converted for {num_shards} shards, skipping")
         return str(out)
     if not raw.is_dir():
         raise FileNotFoundError(f"{raw} is missing; run scripts/fetch_x5.sh first")
-    print(convert_x5(raw, out))
-    done.touch()
+    done.unlink(missing_ok=True)
+    print(convert_x5(raw, out, num_shards))
+    done.write_text(str(num_shards))
     return str(out)
 
 
@@ -118,8 +121,8 @@ def score(features_path: str, trained: dict, out_path: str, bucket: str) -> str:
     tags=["uplift"],
 )
 def uplift_training():
-    processed = ingest(DATA_DIR)
     plan = plan_shards()
+    processed = ingest(DATA_DIR, plan)
     shards = features_shard.partial(
         processed_dir=processed, features_dir=FEATURES_DIR, threads=SHARD_THREADS
     ).expand_kwargs(plan)

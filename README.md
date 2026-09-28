@@ -64,10 +64,10 @@ if spend reaches $15 in a month.
 The Airflow DAG `uplift_training` is triggered by hand (the dataset is
 static):
 
-1. `ingest`: DuckDB converts the raw CSVs to Parquet, purchases partitioned
-   by month (45.8M rows in about 16 s).
-2. `features_shard`: builds 30 per-client features, split into 8 shards by
-   `hash(client_id) % N` that run in parallel.
+1. `ingest`: DuckDB converts the raw CSVs to Parquet (45.8M purchase rows),
+   purchases partitioned by client shard `hash(client_id) % N`, then month.
+2. `features_shard`: builds 30 per-client features in N = 8 shards that run in
+   parallel, each reading only its own purchases.
 3. `merge_features`: joins the shards with the treatment flag and the label.
 4. `train`: fits every learner in `LEARNERS` on one shared split, logs one
    MLflow run per learner with its Qini curve, and registers the best one.
@@ -78,12 +78,15 @@ A full run takes about 5 minutes on an e2-standard-4 spot VM.
 
 ## Serving
 
-![First predict request](docs/diagrams/predict.png)
+![Model load and predict request](docs/diagrams/predict.png)
 
 The API serves one fixed model version (`MODEL_VERSION`), never `latest`.
 Loading a model runs pickled code, so a moving alias would let anyone with
-registry write access change what runs in production. The model is loaded on
-the first request of an instance and kept in memory.
+registry write access change what runs in production. Each instance loads the
+model once, at startup, and keeps it in memory: a request never calls MLflow
+or GCS. `/ready` answers 200 once the model is loaded, and the Cloud Run
+startup probe holds traffic until then. `/health` is a plain liveness check.
+If the model cannot be loaded, `/ready` and `/predict` answer 503.
 
 Two checks guard `/predict`: Cloud Run IAM (the caller needs
 `roles/run.invoker`) and the `X-API-Key` header.
@@ -98,12 +101,13 @@ gcloud run services proxy uplift-api-staging --region us-central1 --port 8080
 ```
 
 The first time, gcloud installs the `cloud-run-proxy` component; run the
-command again if it exits after installing. The first request after a cold
-start can take a minute while the model loads.
+command again if it exits after installing. After a scale to zero, the first
+request waits about a minute while a new instance loads the model.
 
 Open http://localhost:8080/docs, click "Authorize" and paste the staging key
 (`gcloud secrets versions access latest --secret uplift-api-key-staging`).
-Each record needs the 30 features the model was trained on. To build a
+Each record needs exactly the 30 features the model was trained on; missing
+or unknown keys get a 422 that names them. To build a
 request from the local feature table:
 
 ```bash
@@ -223,7 +227,7 @@ uv run mypy src
 | `MLFLOW_EXPERIMENT` | `uplift` | Experiment name |
 | `REGISTERED_MODEL` | `uplift-model` | Registry model name |
 | `FEATURES_PATH` | none | X5 feature table (Parquet) to train on; unset uses synthetic data |
-| `LEARNERS` | `t_xgb,x_xgb` | Learners to compare (`t_xgb`, `x_xgb`, `s_xgb`); the best Qini is registered |
+| `LEARNERS` | `t_xgb,x_xgb,s_xgb` | Learners to compare (`t_xgb`, `x_xgb`, `s_xgb`); the best Qini is registered |
 | `MODEL_VERSION` | none | Model version to serve |
 | `MODEL_URI` | none | Full model URI, overrides `MODEL_VERSION` |
 | `SCORES_PATH` | `data/scores/x5/scores.parquet` | Output of `python -m uplift_pipeline.score` |

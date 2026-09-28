@@ -1,6 +1,7 @@
-"""X5 ingestion: tiny gzipped CSVs in, typed and month-partitioned Parquet out."""
+"""X5 ingestion: tiny gzipped CSVs in, typed and shard/month-partitioned Parquet."""
 
 import gzip
+import json
 
 import duckdb
 
@@ -37,14 +38,21 @@ def test_convert_x5(tmp_path):
         with gzip.open(raw / f"{name}.csv.gz", "wt") as f:
             f.write(text)
 
-    counts = convert_x5(raw, out)
+    counts = convert_x5(raw, out, num_shards=2)
 
     assert counts == {"uplift_train": 2, "clients": 2, "purchases": 3}
-    assert sorted(p.name for p in (out / "purchases").iterdir()) == [
-        "month=2018-12",
-        "month=2019-01",
-    ]
+    layout = json.loads((out / "purchases" / "_layout.json").read_text())
+    assert layout == {"num_shards": 2, "cutoff": "2019-01-15 20:01:02"}
     con = duckdb.connect()
+    # Every purchase file holds only clients of its own shard.
+    files = sorted((out / "purchases").glob("*/*/*.parquet"))
+    for f in files:
+        shard = f.parts[-3].removeprefix("shard=")
+        wrong = con.execute(
+            f"SELECT count(*) FROM '{f}' WHERE hash(client_id) % 2 != {shard}"
+        ).fetchone()
+        assert wrong == (0,)
+    assert {f.parts[-2] for f in files} == {"month=2018-12", "month=2019-01"}
 
     def types(path: str) -> dict[str, str]:
         rows = con.execute(f"DESCRIBE SELECT * FROM {path}").fetchall()
@@ -60,7 +68,7 @@ def test_convert_x5(tmp_path):
     assert clients["first_redeem_date"] == "TIMESTAMP"
     assert clients["age"] == "INTEGER"
     purchases = types(
-        f"read_parquet('{out}/purchases/*/*.parquet', hive_partitioning=1)"
+        f"read_parquet('{out}/purchases/*/*/*.parquet', hive_partitioning=1)"
     )
     assert purchases["client_id"] == "VARCHAR"
     assert purchases["transaction_datetime"] == "TIMESTAMP"

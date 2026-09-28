@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from mlflow.models import Model, ModelSignature
+from mlflow.types import ColSpec, Schema
 
 from uplift_pipeline import config
 from uplift_pipeline.serving import app as serving
@@ -16,6 +18,9 @@ class StubModel:
 
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
+        self.metadata = Model(
+            signature=ModelSignature(inputs=Schema([ColSpec("double", "x")]))
+        )
 
     def predict(self, model_input):
         if self.error is not None:
@@ -32,6 +37,19 @@ def client(monkeypatch):
 
 def test_health_needs_no_key(client):
     assert client.get("/health").status_code == 200
+
+
+def test_ready_once_the_model_is_loaded(client, monkeypatch):
+    assert client.get("/ready").status_code == 200
+    monkeypatch.setattr(serving, "get_model", lambda: None)
+    assert client.get("/ready").status_code == 503
+
+
+def test_predict_unavailable_without_model(client, monkeypatch):
+    monkeypatch.setattr(serving, "get_model", lambda: None)
+    resp = client.post("/predict", json={"records": [{"x": 1.0}]}, headers=HEADERS)
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "service unavailable"
 
 
 def test_predict_rejects_missing_key(client):
@@ -70,7 +88,7 @@ def test_predict_succeeds_with_key(client):
 
 
 def test_predict_rejects_all_null_record(client):
-    records = [{"x": 1.0, "z": None}, {"x": None, "z": None}]
+    records = [{"x": 1.0}, {"x": None}]
     resp = client.post("/predict", json={"records": records}, headers=HEADERS)
     assert resp.status_code == 422
     assert resp.json()["detail"] == "records with all features null: [1]"
@@ -83,3 +101,17 @@ def test_internal_error_does_not_leak_schema(client, monkeypatch):
     assert resp.status_code == 422
     assert resp.json()["detail"] == "invalid input"
     assert leaked not in resp.text
+
+
+def test_predict_rejects_missing_feature(client):
+    resp = client.post("/predict", json={"records": [{}]}, headers=HEADERS)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "features do not match the model: ['missing x']"
+
+
+def test_predict_rejects_unknown_features(client):
+    record = {"x": 1.0} | {f"k{i:02}": 1.0 for i in range(20)}
+    resp = client.post("/predict", json={"records": [record]}, headers=HEADERS)
+    assert resp.status_code == 422
+    keys = [f"unknown k{i:02}" for i in range(10)]
+    assert resp.json()["detail"] == f"features do not match the model: {keys}"

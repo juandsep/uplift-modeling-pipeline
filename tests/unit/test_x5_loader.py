@@ -39,6 +39,7 @@ def test_loads_valid_table(tmp_path):
         (lambda d: d.assign(y=[1.0, None, 0.0]), "'y' must be 0/1"),
         (lambda d: d.assign(gender=["F", "M", "U"]), "non-numeric.*gender"),
         (lambda d: d.assign(client_id=["a", "a", "c"]), "client_id is not unique"),
+        (lambda d: d.drop(columns=["age", "spend"]), "no feature columns"),
     ],
 )
 def test_rejects_bad_table(tmp_path, change, error):

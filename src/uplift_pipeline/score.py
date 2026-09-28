@@ -25,8 +25,7 @@ def score(features_path: str | Path, model_uri: str, out_path: str | Path) -> Pa
     df, features = load_x5_features(features_path)
     # load_x5_features drops client_id but keeps the row index, so it aligns.
     ids = pd.read_parquet(features_path, columns=["client_id"])["client_id"]
-    config.refresh_mlflow_token(config.MLFLOW_TRACKING_URI)
-    mlflow.set_tracking_uri(config.MLFLOW_TRACKING_URI)
+    config.init_mlflow()
     model = mlflow.pyfunc.load_model(model_uri)
     scores = pd.DataFrame(
         {

@@ -74,9 +74,7 @@ def run(
     curve = qini_curve(test_df["y"], test_df["treatment"], uplifts)
     colors = {name: COLORS[LEARNERS.index(name) % len(COLORS)] for name in models}
 
-    config.refresh_mlflow_token(config.MLFLOW_TRACKING_URI)
-    mlflow.set_tracking_uri(config.MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(config.EXPERIMENT_NAME)
+    config.init_mlflow(config.EXPERIMENT_NAME)
     version = None
     with mlflow.start_run():
         mlflow.log_params(

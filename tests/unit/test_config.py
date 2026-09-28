@@ -91,3 +91,24 @@ def test_mlflow_token_skipped_for_local_store(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", fail)
     config.refresh_mlflow_token("sqlite:///mlflow.db")
+
+
+def test_floating_alias_is_the_fallback(monkeypatch):
+    monkeypatch.delenv("MODEL_URI", raising=False)
+    monkeypatch.delenv("MODEL_VERSION", raising=False)
+    uri = config.resolve_model_uri()
+    assert uri == f"models:/{config.REGISTERED_MODEL}/latest"
+    assert not config.is_pinned(uri)
+
+
+@pytest.mark.parametrize(
+    ("uri", "pinned"),
+    [
+        ("models:/uplift-model/3/", True),  # trailing slash is still a version
+        ("models:/uplift-model@champion", False),  # alias syntax
+        ("models:/uplift-model/v3", False),
+        ("gs://bucket/model", True),
+    ],
+)
+def test_is_pinned_edge_cases(uri, pinned):
+    assert config.is_pinned(uri) is pinned

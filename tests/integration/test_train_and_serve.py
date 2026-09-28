@@ -18,7 +18,6 @@ def test_train_register_and_serve(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "API_KEY", "test-key")
     monkeypatch.setattr(config, "ALLOW_UNPINNED_MODEL", False)
     monkeypatch.setattr(config, "FEATURES_PATH", None)
-    serving.get_model.cache_clear()
 
     metrics, version = run(n_samples=2000, learners=["t_xgb", "x_xgb"])
     assert set(metrics) == {"qini", "auuc", "ate", "mean_uplift"}
@@ -56,24 +55,27 @@ def test_train_register_and_serve(tmp_path, monkeypatch):
 
     df, features = load_training_data(n_samples=10, seed=1)
     records = df[features].head(3).to_dict("records")
-    client = TestClient(serving.app)
-    ok = client.post("/predict", json={"records": records}, headers=HEADERS)
-    assert ok.status_code == 200
-    assert len(ok.json()["uplift"]) == 3
+    with TestClient(serving.app) as client:
+        assert client.get("/ready").status_code == 200
+        ok = client.post("/predict", json={"records": records}, headers=HEADERS)
+        assert ok.status_code == 200
+        assert len(ok.json()["uplift"]) == 3
 
-    bad = client.post("/predict", json={"records": [{"nope": 1.0}]}, headers=HEADERS)
-    assert bad.status_code == 422
-    assert bad.json()["detail"] == "invalid input"
+        bad = client.post(
+            "/predict", json={"records": [{"nope": 1.0}]}, headers=HEADERS
+        )
+        assert bad.status_code == 422
+        assert "missing " + sorted(features)[0] in bad.json()["detail"]
+        assert tracking_uri not in bad.text
 
-    unauth = client.post("/predict", json={"records": records})
-    assert unauth.status_code == 401
+        unauth = client.post("/predict", json={"records": records})
+        assert unauth.status_code == 401
 
 
 def test_train_on_x5_features_with_nulls(tmp_path, monkeypatch):
     tracking_uri = f"sqlite:///{tmp_path}/m.db"
     monkeypatch.setattr(config, "MLFLOW_TRACKING_URI", tracking_uri)
     monkeypatch.setattr(config, "API_KEY", "test-key")
-    serving.get_model.cache_clear()
     rng = np.random.default_rng(0)
     n = 400
     w = rng.integers(0, 2, n)
@@ -106,9 +108,8 @@ def test_train_on_x5_features_with_nulls(tmp_path, monkeypatch):
         config, "MODEL_URI", f"models:/{config.REGISTERED_MODEL}/{version.version}"
     )
     records = [{"age": None, "spend": 30.0}, {"age": 40, "spend": 12.5}]
-    resp = TestClient(serving.app).post(
-        "/predict", json={"records": records}, headers=HEADERS
-    )
+    with TestClient(serving.app) as client:
+        resp = client.post("/predict", json={"records": records}, headers=HEADERS)
     assert resp.status_code == 200
     assert len(resp.json()["uplift"]) == 2
 
@@ -118,10 +119,11 @@ def test_serving_refuses_floating_alias(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "API_KEY", "test-key")
     monkeypatch.setattr(config, "ALLOW_UNPINNED_MODEL", False)
     monkeypatch.setattr(config, "MODEL_URI", "models:/uplift-model/latest")
-    serving.get_model.cache_clear()
 
-    client = TestClient(serving.app, raise_server_exceptions=False)
-    resp = client.post("/predict", json={"records": [{"x": 1.0}]}, headers=HEADERS)
+    with TestClient(serving.app) as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/ready").status_code == 503
+        resp = client.post("/predict", json={"records": [{"x": 1.0}]}, headers=HEADERS)
 
     assert resp.status_code == 503
     assert resp.json()["detail"] == "service unavailable"
