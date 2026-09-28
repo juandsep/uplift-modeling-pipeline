@@ -18,8 +18,9 @@ src/uplift_pipeline/
   models/          T-learner, saved as an MLflow pyfunc model
   evaluation/      Qini and AUUC
   train.py         train, evaluate, register the model
+  score.py         batch scoring: uplift for every client, highest first
   serving/app.py   FastAPI app
-dags/              Airflow DAG (ingest, features, train)
+dags/              Airflow DAG (ingest, features, train, score)
 infra/             Terraform for the GCP resources
 scripts/           dataset download
 docker/            API image
@@ -77,6 +78,7 @@ uv run mypy src
 | `LEARNERS` | `t_xgb,x_xgb` | Learners to compare (`t_xgb`, `x_xgb`, `s_xgb`); the best Qini is registered |
 | `MODEL_VERSION` | none | Model version to serve |
 | `MODEL_URI` | none | Full model URI, overrides `MODEL_VERSION` |
+| `SCORES_PATH` | `data/scores/x5/scores.parquet` | Output of `python -m uplift_pipeline.score` |
 | `ALLOW_UNPINNED_MODEL` | `false` | Local only: allow serving `latest` |
 | `API_KEY` | none | Required by `/predict` (sent as `X-API-Key`) |
 | `MAX_RECORDS` | `1000` | Max rows per request |

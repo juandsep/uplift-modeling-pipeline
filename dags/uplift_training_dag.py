@@ -1,4 +1,4 @@
-"""Retraining on X5: ingest -> feature shards -> merge -> train.
+"""Retraining on X5: ingest -> feature shards -> merge -> train -> score.
 
 Pipeline tasks run in /opt/venv, the package's own uv environment (see
 airflow/Dockerfile), through @task.external_python. Only each function's source
@@ -15,6 +15,9 @@ from airflow.sdk import Variable, dag, task
 
 DATA_DIR = os.getenv("UPLIFT_DATA_DIR", "/opt/airflow/data")
 FEATURES_DIR = f"{DATA_DIR}/features/x5"
+SCORES_PATH = f"{DATA_DIR}/scores/x5/scores.parquet"
+# Set on the GCP VM (infra/airflow_vm_startup.sh): scores are copied there too.
+DATA_BUCKET = os.getenv("UPLIFT_DATA_BUCKET", "")
 SHARD_THREADS = int(os.getenv("UPLIFT_SHARD_THREADS", "2"))
 # Shards running at once; also bounded by AIRFLOW__CORE__PARALLELISM.
 MAX_PARALLEL_SHARDS = int(os.getenv("UPLIFT_MAX_PARALLEL_SHARDS", "8"))
@@ -76,11 +79,31 @@ def merge_features(features_dir: str, shards: list[dict[str, int]]) -> str:
 
 
 @task.external_python(**VENV)
-def train(features_path: str) -> dict[str, float]:
+def train(features_path: str) -> dict:
     from uplift_pipeline.train import run
 
+    metrics, version = run(features_path=features_path)
+    if version is None:
+        raise RuntimeError("the registry assigned no model version")
     # Plain floats: numpy scalars would not unpickle in Airflow's environment.
-    return {k: float(v) for k, v in run(features_path=features_path).items()}
+    return {"metrics": {k: float(v) for k, v in metrics.items()}, "version": version}
+
+
+@task.external_python(**VENV)
+def score(features_path: str, trained: dict, out_path: str, bucket: str) -> str:
+    from uplift_pipeline import config
+    from uplift_pipeline.score import score as score_clients
+
+    # The version this run registered, pinned: a later registry write cannot swap it.
+    uri = f"models:/{config.REGISTERED_MODEL}/{trained['version']}"
+    path = score_clients(features_path, uri, out_path)
+    if not bucket:
+        return str(path)
+    from google.cloud import storage
+
+    blob = storage.Client().bucket(bucket).blob("scores/x5/scores.parquet")
+    blob.upload_from_filename(str(path))
+    return f"gs://{bucket}/{blob.name}"
 
 
 @dag(
@@ -102,7 +125,7 @@ def uplift_training():
     ).expand_kwargs(plan)
     features = merge_features(FEATURES_DIR, plan)
     shards >> features
-    train(features)
+    score(features, train(features), SCORES_PATH, DATA_BUCKET)
 
 
 uplift_training()
