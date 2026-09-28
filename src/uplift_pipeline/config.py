@@ -10,7 +10,7 @@ REGISTERED_MODEL = os.getenv("REGISTERED_MODEL", "uplift-model")
 # Per-client X5 feature table (Parquet). Unset: train on synthetic data.
 FEATURES_PATH = os.getenv("FEATURES_PATH") or None
 # Learners to train and compare (see models.LEARNERS); the best Qini is registered.
-LEARNERS = [s.strip() for s in os.getenv("LEARNERS", "t_xgb,x_xgb").split(",")]
+LEARNERS = [s.strip() for s in os.getenv("LEARNERS", "t_xgb,x_xgb,s_xgb").split(",")]
 
 # Serving guardrails. API_KEY is required: the API fails closed without it.
 API_KEY = os.getenv("API_KEY", "")
