@@ -145,6 +145,28 @@ Qini measured on that control group drops, or when feature drift (PSI above
 0.2) shows the clients have changed. Release a new model by setting
 `MODEL_VERSION` in the staging environment first, then in production.
 
+## Drift scenarios
+
+`python -m uplift_pipeline.simulate` resamples held-out X5 clients and breaks
+one thing on purpose, to check that monitoring notices. Sent to staging, 10k
+clients each:
+
+| Scenario | What changes | Mean uplift | Lift in top 20% |
+|---|---|---|---|
+| baseline | nothing | 0.028 | +0.120 |
+| covariate | spend x1.5, age +10 | 0.030 | +0.120 |
+| missing | 30% of rows lose 5 features | 0.012 | +0.111 |
+| concept | treatment no longer changes y | 0.028 | -0.019 |
+
+Covariate drift barely moves the predictions, so it has to be caught on the
+inputs (PSI). Concept drift leaves inputs and predictions untouched; only
+labels from a new campaign with a control group show it.
+
+```bash
+uv run python -m uplift_pipeline.simulate covariate --n 10000 \
+  --send http://localhost:8080 --api-key "$KEY" --out covariate.parquet
+```
+
 ## Run locally
 
 Requires [uv](https://docs.astral.sh/uv/). On macOS, xgboost also needs
