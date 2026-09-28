@@ -85,10 +85,14 @@ jobs:
           region: ${{ vars.GCP_REGION }}
           image: ${{ env.IMAGE }}
           # Cap the fan-out: the API has no rate limiting of its own.
-          # Scales to zero; staging gets a smaller cap.
+          # Scales to zero; staging gets a smaller cap. The model loads at
+          # instance start: the startup probe holds traffic until /ready (up to
+          # 240s), and CPU boost speeds up the load.
           flags: >-
             --service-account=${{ vars.GCP_RUNTIME_SA }}
             --memory=1Gi
+            --cpu-boost
+            --startup-probe=httpGet.path=/ready,periodSeconds=10,timeoutSeconds=5,failureThreshold=24
             --min-instances=0
             --max-instances=${{ env.STAGING == 'true' && '2' || '10' }}
           env_vars: |
