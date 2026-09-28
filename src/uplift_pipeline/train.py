@@ -3,6 +3,7 @@
 import time
 
 import mlflow
+import pandas as pd
 from mlflow import MlflowClient
 from sklearn.model_selection import train_test_split
 
@@ -19,6 +20,17 @@ def registered_version(run_id: str) -> str | None:
         f"name = '{config.REGISTERED_MODEL}' and run_id = '{run_id}'"
     )
     return str(versions[0].version) if versions else None
+
+
+def split(df: pd.DataFrame, seed: int = 42) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Train/test split shared by training and batch scoring.
+
+    Stratified on treatment and y so each part keeps the arm sizes and base rates.
+    """
+    train_df, test_df = train_test_split(
+        df, test_size=0.3, random_state=seed, stratify=df[["treatment", "y"]]
+    )
+    return train_df, test_df
 
 
 def run(
@@ -48,10 +60,7 @@ def run(
     # Built up front so an unknown learner fails before any training.
     models = {name: UpliftModel(features, name) for name in learners or config.LEARNERS}
     # One split for every learner, so the comparison is fair.
-    # Stratify on both so each split keeps the arm sizes and the base rates.
-    train_df, test_df = train_test_split(
-        df, test_size=0.3, random_state=seed, stratify=df[["treatment", "y"]]
-    )
+    train_df, test_df = split(df, seed)
     uplifts, metrics, fit_seconds = {}, {}, {}
     for name, model in models.items():
         start = time.perf_counter()

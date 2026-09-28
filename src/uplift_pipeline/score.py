@@ -12,10 +12,15 @@ import pandas as pd
 
 from uplift_pipeline import config
 from uplift_pipeline.data import load_x5_features
+from uplift_pipeline.train import split
 
 
 def score(features_path: str | Path, model_uri: str, out_path: str | Path) -> Path:
-    """Write client_id, uplift, treatment, y for every client, best uplift first."""
+    """Write client_id, uplift, treatment, y, split for every client, best first.
+
+    split is "test" for the rows training held out (same seed): only those give
+    an unbiased estimate of incremental conversions.
+    """
     config.assert_model_uri_is_pinned(model_uri)
     df, features = load_x5_features(features_path)
     # load_x5_features drops client_id but keeps the row index, so it aligns.
@@ -29,8 +34,11 @@ def score(features_path: str | Path, model_uri: str, out_path: str | Path) -> Pa
             "uplift": model.predict(df[features]),
             "treatment": df["treatment"],
             "y": df["y"],
+            "split": "train",
         }
-    ).sort_values("uplift", ascending=False, ignore_index=True)
+    )
+    scores.loc[split(df)[1].index, "split"] = "test"
+    scores = scores.sort_values("uplift", ascending=False, ignore_index=True)
 
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -152,9 +152,10 @@ def test_batch_score_every_client(tmp_path, monkeypatch):
     )
 
     scores = pd.read_parquet(out)
-    assert list(scores.columns) == ["client_id", "uplift", "treatment", "y"]
+    assert list(scores.columns) == ["client_id", "uplift", "treatment", "y", "split"]
     assert len(scores) == n
     assert scores["uplift"].is_monotonic_decreasing
+    assert (scores["split"] == "test").sum() == round(n * 0.3)
     merged = scores.merge(table, on="client_id", suffixes=("", "_src"))
     assert len(merged) == n
     assert (merged["treatment"] == merged["treatment_src"]).all()
