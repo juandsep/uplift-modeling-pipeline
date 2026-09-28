@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uplift targeting demo</title>
+<style>
+  :root { --fg: #1a1a1a; --muted: #666; --bg: #fff; --line: #2563eb; --grid: #ddd; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #eee; --muted: #999; --bg: #111; --line: #60a5fa; --grid: #333; }
+  }
+  body { margin: 0 auto; max-width: 760px; padding: 24px 16px; font: 16px/1.5 system-ui, sans-serif;
+         color: var(--fg); background: var(--bg); }
+  h1 { font-size: 1.6rem; margin: 0 0 8px; }
+  p, .note { color: var(--muted); }
+  label { display: block; margin: 24px 0 4px; font-weight: 600; }
+  input[type=range] { width: 100%; }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 16px 0; }
+  .metric span { display: block; font-size: .85rem; color: var(--muted); }
+  .metric b { font-size: 1.7rem; font-variant-numeric: tabular-nums; }
+  svg { width: 100%; height: auto; }
+  svg text { fill: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Uplift targeting demo</h1>
+<p>Uplift is the change in a client's chance to convert caused by the campaign:
+the conversion probability if treated minus the probability if not. Targeting
+the clients with the highest predicted uplift spends the budget on people the
+campaign actually moves, not on those who would buy anyway.</p>
+
+<label for="k">Target the top <output id="kout">20</output>% of clients by predicted uplift</label>
+<input id="k" type="range" min="1" max="100" value="20">
+
+<div class="metrics">
+  <div class="metric"><span>Clients targeted</span><b id="n">-</b></div>
+  <div class="metric"><span>Incremental conversions (model)</span><b id="model">-</b></div>
+  <div class="metric"><span>Random targeting, same size</span><b id="random">-</b></div>
+</div>
+
+<svg id="chart" viewBox="0 0 700 360" role="img" aria-label="Cumulative uplift curve"></svg>
+
+<p class="note">Estimates come from the observed treatment vs control conversion
+rates inside the targeted group, times its size, on <span id="total">-</span>
+X5 RetailHero clients the model did not train on. Scores are precomputed; this
+page calls no API.</p>
+
+<script>
+const fmt = (x) => Math.round(x).toLocaleString("en-US");
+
+// Incremental conversions when targeting the top n rows, for every n:
+// (treated rate - control rate) in the top n, times n. Rows are sorted by uplift.
+function cumulativeUplift(rows) {
+  const curve = new Float64Array(rows.length);
+  let nt = 0, nc = 0, yt = 0, yc = 0;
+  rows.forEach(([t, y], i) => {
+    if (t) { nt++; yt += y; } else { nc++; yc += y; }
+    curve[i] = nt && nc ? (yt / nt - yc / nc) * (i + 1) : 0;
+  });
+  return curve;
+}
+
+function draw(curve, k) {
+  const W = 700, H = 360, L = 60, R = 16, T = 16, B = 44;
+  const total = curve.length, last = curve[total - 1];
+  const ymax = Math.max(...curve, last) * 1.05, ymin = Math.min(0, ...curve);
+  const x = (p) => L + (p / 100) * (W - L - R);
+  const y = (v) => H - B - ((v - ymin) / (ymax - ymin)) * (H - T - B);
+  const step = Math.max(1, Math.floor(total / 400));
+  let path = "";
+  for (let i = 0; i < total; i += step) path += `${path ? "L" : "M"}${x((i + 1) / total * 100)},${y(curve[i])}`;
+  path += `L${x(100)},${y(last)}`;
+  const n = Math.max(1, Math.round(total * k / 100));
+  const ticks = [0, 25, 50, 75, 100].map((p) =>
+    `<text x="${x(p)}" y="${H - B + 18}" text-anchor="middle">${p}%</text>`).join("");
+  const yticks = [0, 0.5, 1].map((f) => ymin + f * (ymax - ymin)).map((v) =>
+    `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>` +
+    `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmt(v)}</text>`).join("");
+  document.getElementById("chart").innerHTML = `
+    ${yticks}${ticks}
+    <text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">Clients targeted</text>
+    <line x1="${x(0)}" y1="${y(0)}" x2="${x(100)}" y2="${y(last)}" stroke="var(--muted)" stroke-dasharray="6 4"/>
+    <path d="${path}" fill="none" stroke="var(--line)" stroke-width="2"/>
+    <circle cx="${x(k)}" cy="${y(curve[n - 1])}" r="5" fill="var(--fg)"/>
+    <text x="${W - R}" y="${T + 12}" text-anchor="end">solid: model ranking, dashed: random</text>`;
+}
+
+fetch("scores_sample.csv").then((r) => r.text()).then((text) => {
+  const rows = text.trim().split("\n").slice(1).map((line) => {
+    const [, t, y] = line.split(",");
+    return [Number(t), Number(y)];
+  });
+  const curve = cumulativeUplift(rows), total = rows.length;
+  document.getElementById("total").textContent = fmt(total);
+  const slider = document.getElementById("k");
+  const update = () => {
+    const k = Number(slider.value), n = Math.max(1, Math.round(total * k / 100));
+    const model = curve[n - 1], random = curve[total - 1] * n / total;
+    document.getElementById("kout").textContent = k;
+    document.getElementById("n").textContent = fmt(n);
+    document.getElementById("model").textContent = fmt(model);
+    document.getElementById("random").textContent = fmt(random);
+    draw(curve, k);
+  };
+  slider.addEventListener("input", update);
+  update();
+});
+</script>
+</body>
+</html>

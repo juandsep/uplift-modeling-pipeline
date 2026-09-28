@@ -1,7 +1,7 @@
 ---
 title: Uplift Targeting Demo
-sdk: docker
-app_port: 8501
+sdk: static
+app_file: index.html
 pinned: false
 ---
 
@@ -10,49 +10,28 @@ pinned: false
 Pick what share of clients to target, ranked by predicted uplift, and see how
 many extra conversions that brings compared with targeting at random.
 
-The app reads precomputed scores from `scores_sample.parquet` (columns
-`client_id`, `uplift`, `treatment`, `y`). It calls no API and needs no
-credentials. The sample holds only clients the model did not train on.
+The page is plain HTML and JavaScript. It reads `scores_sample.csv` (columns
+`uplift`, `treatment`, `y`, sorted by uplift), a 20,000-row sample of X5
+RetailHero clients the model did not train on. It calls no API and needs no
+credentials.
 
 Incremental conversions for the top k% are estimated as the treated minus
 control conversion rate inside that group, times the group size.
 
 ## Run locally
 
-From the repository root:
-
 ```bash
-uv run --with-requirements demo/requirements.txt streamlit run demo/app.py
+python -m http.server -d demo 8000   # then open http://localhost:8000
 ```
 
-Or with pip:
+## Refresh the data and publish
+
+From the scores the training DAG writes (`gs://<data bucket>/scores/x5/scores.parquet`):
 
 ```bash
-pip install -r demo/requirements.txt
-streamlit run demo/app.py
-```
-
-The Space builds `Dockerfile` (Hugging Face no longer offers a Streamlit
-SDK, only Docker). Publish or update it with:
-
-```bash
+uv run python demo/make_sample.py data/scores/x5/scores.parquet
 hf upload sepulvedajd/uplift-targeting-demo demo . --type space --exclude make_sample.py
 ```
 
-## Refresh the data
-
-From a full scores Parquet file (any size, same columns):
-
-```bash
-uv run python demo/make_sample.py path/to/scores.parquet
-```
-
-This writes a stratified sample of 20,000 rows (fixed seed) to
-`demo/scores_sample.parquet`. Use `--rows` to change the size.
-
-To rebuild the synthetic placeholder instead (trains a quick model with the
-repository package):
-
-```bash
-uv run python demo/make_sample.py --synthetic
-```
+The Space is a static Space: Hugging Face only hosts Docker and Gradio Spaces
+on a paid plan.
