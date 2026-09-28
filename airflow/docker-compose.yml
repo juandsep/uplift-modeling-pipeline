@@ -31,6 +31,8 @@ x-airflow: &airflow
     UPLIFT_NUM_SHARDS: ${UPLIFT_NUM_SHARDS:-8}
     UPLIFT_MAX_PARALLEL_SHARDS: ${UPLIFT_MAX_PARALLEL_SHARDS:-8}
     UPLIFT_SHARD_THREADS: ${UPLIFT_SHARD_THREADS:-2}
+    # Empty: batch scores stay on the data volume only.
+    UPLIFT_DATA_BUCKET: ${UPLIFT_DATA_BUCKET:-}
     # Without a server, runs land in a SQLite store on the data volume.
     MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-sqlite:////opt/airflow/data/mlflow.db}
     MLFLOW_TRACKING_TOKEN: ${MLFLOW_TRACKING_TOKEN:-}

@@ -25,7 +25,9 @@ root.
      airflow dags trigger uplift_training
    ```
 
-Outputs land in `data/processed/x5` and `data/features/x5`. The shard count
+Outputs land in `data/processed/x5`, `data/features/x5` and
+`data/scores/x5/scores.parquet` (every client scored by the version the run
+registered; on the GCP VM also copied to `gs://<data bucket>/scores/x5/`). The shard count
 comes from the Airflow Variable `uplift_num_shards`, else `UPLIFT_NUM_SHARDS`.
 Stop with `docker compose -f airflow/docker-compose.yml down` (add `-v` to
 drop the metadata DB and logs).

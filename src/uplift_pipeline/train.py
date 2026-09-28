@@ -18,7 +18,7 @@ def registered_version(run_id: str) -> str | None:
     versions = client.search_model_versions(
         f"name = '{config.REGISTERED_MODEL}' and run_id = '{run_id}'"
     )
-    return versions[0].version if versions else None
+    return str(versions[0].version) if versions else None
 
 
 def run(
@@ -26,9 +26,10 @@ def run(
     seed: int = 42,
     features_path: str | None = None,
     learners: list[str] | None = None,
-) -> dict[str, float]:
+) -> tuple[dict[str, float], str | None]:
     """Train and compare learners on the X5 table at features_path (or
-    FEATURES_PATH), else synthetic. Registers the best by Qini, returns its metrics.
+    FEATURES_PATH), else synthetic. Registers the best by Qini, returns its
+    metrics and registered version (None if the registry assigned none).
 
     n_samples only applies to synthetic data. learners defaults to LEARNERS.
     MLflow: one parent run, one nested run per learner.
@@ -109,7 +110,7 @@ def run(
             f"registered {config.REGISTERED_MODEL} version {version} ({best}; "
             f"serve it with MODEL_VERSION={version})"
         )
-    return metrics[best]
+    return metrics[best], version
 
 
 if __name__ == "__main__":

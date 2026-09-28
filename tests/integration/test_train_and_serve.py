@@ -5,6 +5,7 @@ from mlflow import MlflowClient
 
 from uplift_pipeline import config
 from uplift_pipeline.data import load_training_data
+from uplift_pipeline.score import score
 from uplift_pipeline.serving import app as serving
 from uplift_pipeline.train import run
 
@@ -19,7 +20,7 @@ def test_train_register_and_serve(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "FEATURES_PATH", None)
     serving.get_model.cache_clear()
 
-    metrics = run(n_samples=2000, learners=["t_xgb", "x_xgb"])
+    metrics, version = run(n_samples=2000, learners=["t_xgb", "x_xgb"])
     assert set(metrics) == {"qini", "auuc", "ate", "mean_uplift"}
 
     mlflow_client = MlflowClient(tracking_uri=tracking_uri)
@@ -42,6 +43,7 @@ def test_train_register_and_serve(tmp_path, monkeypatch):
     assert metrics["qini"] == parent.data.metrics[f"{best}_qini"]
     assert versions[0].run_id == children[best].info.run_id
     assert parent.data.tags["registered_version"] == str(versions[0].version)
+    assert version == str(versions[0].version)
     parent_files = {a.path for a in mlflow_client.list_artifacts(parent.info.run_id)}
     assert {"qini_curves.png", "qini_curves.csv"} <= parent_files
     for r in children.values():
@@ -89,7 +91,7 @@ def test_train_on_x5_features_with_nulls(tmp_path, monkeypatch):
     path = tmp_path / "client_features.parquet"
     table.to_parquet(path)
 
-    metrics = run(features_path=str(path), learners=["t_xgb"])
+    metrics, _ = run(features_path=str(path), learners=["t_xgb"])
 
     assert set(metrics) == {"qini", "auuc", "ate", "mean_uplift"}
     client = MlflowClient(tracking_uri=tracking_uri)
@@ -124,3 +126,36 @@ def test_serving_refuses_floating_alias(tmp_path, monkeypatch):
     assert resp.status_code == 503
     assert resp.json()["detail"] == "service unavailable"
     assert "uplift" not in resp.text
+
+
+def test_batch_score_every_client(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "MLFLOW_TRACKING_URI", f"sqlite:///{tmp_path}/m.db")
+    rng = np.random.default_rng(1)
+    n = 300
+    w = rng.integers(0, 2, n)
+    table = pd.DataFrame(
+        {
+            "client_id": [f"c{i}" for i in range(n)],
+            "treatment": w,
+            "y": (rng.uniform(size=n) < 0.5 + 0.1 * w).astype(int),
+            "spend": rng.gamma(2, 50, n),
+        }
+    )
+    path = tmp_path / "client_features.parquet"
+    table.to_parquet(path)
+    _, version = run(features_path=str(path), learners=["t_xgb"])
+
+    out = score(
+        path,
+        f"models:/{config.REGISTERED_MODEL}/{version}",
+        tmp_path / "scores" / "scores.parquet",
+    )
+
+    scores = pd.read_parquet(out)
+    assert list(scores.columns) == ["client_id", "uplift", "treatment", "y"]
+    assert len(scores) == n
+    assert scores["uplift"].is_monotonic_decreasing
+    merged = scores.merge(table, on="client_id", suffixes=("", "_src"))
+    assert len(merged) == n
+    assert (merged["treatment"] == merged["treatment_src"]).all()
+    assert (merged["y"] == merged["y_src"]).all()

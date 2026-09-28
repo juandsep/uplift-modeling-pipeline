@@ -80,10 +80,11 @@ dotenv=$(gcloud secrets versions access latest --secret=uplift-airflow-env)
 (
   umask 077
   {
-    grep -vE '^(AIRFLOW_IMAGE|AIRFLOW_UID|UPLIFT_DATA_HOST_DIR|MLFLOW_TRACKING_URI|MLFLOW_TRACKING_TOKEN)=' <<<"$dotenv" || true
+    grep -vE '^(AIRFLOW_IMAGE|AIRFLOW_UID|UPLIFT_DATA_HOST_DIR|UPLIFT_DATA_BUCKET|MLFLOW_TRACKING_URI|MLFLOW_TRACKING_TOKEN)=' <<<"$dotenv" || true
     echo "AIRFLOW_IMAGE=$image"
     echo "AIRFLOW_UID=50000"
     echo "UPLIFT_DATA_HOST_DIR=$root/data"
+    echo "UPLIFT_DATA_BUCKET=$bucket"
     echo "MLFLOW_TRACKING_URI=$mlflow_uri"
     # Empty: the train task mints identity tokens from the metadata server.
     echo "MLFLOW_TRACKING_TOKEN="
