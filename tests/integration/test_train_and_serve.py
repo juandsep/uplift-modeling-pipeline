@@ -48,6 +48,8 @@ def test_train_register_and_serve(tmp_path, monkeypatch):
     for r in children.values():
         files = {a.path for a in mlflow_client.list_artifacts(r.info.run_id)}
         assert "qini_curve.png" in files
+        # Only the registered learner carries the drift reference.
+        assert ("reference_profile.json" in files) == (r is children[best])
         assert len(r.outputs.model_outputs) == 1
     monkeypatch.setattr(
         config, "MODEL_URI", f"models:/{config.REGISTERED_MODEL}/{versions[0].version}"
