@@ -14,7 +14,13 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader
 from mlflow.exceptions import MlflowException
 from mlflow.pyfunc import PyFuncModel
-from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 from pydantic import BaseModel, Field
 
 from uplift_pipeline import config
@@ -43,7 +49,7 @@ PREDICT_ERRORS = Counter(
 )
 MODEL = Gauge("uplift_model_info", "1 for the model this instance serves", ["uri"])
 # Fixed label set: raw paths from scanners would blow up the series count.
-_PATHS = {"/predict", "/ready", "/health"}
+_PATHS = {"/predict", "/ready", "/health", "/metrics"}
 
 # Loaded once per instance, before it takes traffic. None: /predict answers 503.
 _model: PyFuncModel | None = None
@@ -70,8 +76,6 @@ def get_model() -> PyFuncModel | None:
 
 
 app = FastAPI(title="Uplift API", lifespan=lifespan)
-# Unauthenticated like /health; on Cloud Run, IAM still guards it.
-app.mount("/metrics", make_asgi_app())
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -137,6 +141,12 @@ class PredictResponse(BaseModel):
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    # Unauthenticated like /health; on Cloud Run, IAM still guards it.
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/ready")
