@@ -52,6 +52,7 @@ uv sync
 uv run pre-commit install          # once per clone
 uv run pre-commit run --all-files
 uv run pytest
+uv run pytest --cov --cov-fail-under=80   # coverage, as CI runs it
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src
 uv run --with pip-audit pip-audit  # dependency audit against OSV.dev
@@ -64,6 +65,9 @@ positive, add the finding to `.secrets.baseline`:
 uvx detect-secrets scan --baseline .secrets.baseline
 uvx detect-secrets audit .secrets.baseline
 ```
+
+CI runs the same `detect-secrets` hook plus gitleaks over the pushed commits.
+Dependabot opens weekly update PRs into `dev` for uv, GitHub Actions and Docker.
 
 If a real secret ever reaches a commit, treat it as compromised: rotate it
 first, then rewrite history. Deleting the commit is not enough.
