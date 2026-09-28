@@ -9,7 +9,7 @@ one run must use the same version.
 Cutoff and leakage: the uplift campaign (treatment and target) happens after the
 purchase history ends, so the cutoff is the last observed purchase,
 ``max(transaction_datetime)`` over all purchases (2019-03-18 on the real data).
-Every shard derives it from the same files, so all shards agree. All time
+Ingestion stores it with the purchase layout, so all shards agree. All time
 features are measured back from it, and ``first_redeem_date`` (which runs to
 2019-11, well into the campaign) is censored at it: a redemption after the
 cutoff counts as "not redeemed yet".
@@ -22,12 +22,15 @@ from pathlib import Path
 
 import duckdb
 
+from uplift_pipeline.data.x5 import read_layout
+
 DAY = 86400.0
 RECENT_DAYS = 30
 
 
-def _purchases(processed_dir: Path) -> str:
-    return f"read_parquet('{processed_dir}/purchases/*/*.parquet', hive_partitioning=1)"
+def _purchases(processed_dir: Path, shard: int) -> str:
+    files = f"{processed_dir}/purchases/shard={shard}/*/*.parquet"
+    return f"read_parquet('{files}', hive_partitioning=1)"
 
 
 def build_shard(
@@ -39,27 +42,14 @@ def build_shard(
     processed_dir, out_dir = Path(processed_dir), Path(out_dir)
     dst = out_dir / "shards" / f"shard={shard}.parquet"
     dst.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(config={"threads": threads})
-    # Parallel float sums change in the last bit with thread scheduling; summing
-    # as DECIMAL is exact, so a rerun (or another shard count) is bit-identical.
-    for fn in ("sum", "avg"):
-        con.execute(f"CREATE MACRO d{fn}(x) AS {fn}(x::DECIMAL(18, 4))::DOUBLE")
-    row = con.execute(
-        f"SELECT max(transaction_datetime) FROM {_purchases(processed_dir)}"
-    ).fetchone()
-    if row is None or row[0] is None:
-        raise ValueError(f"no purchases under {processed_dir}")
-    cutoff = f"TIMESTAMP '{row[0]}'"
+    cutoff = f"TIMESTAMP '{read_layout(processed_dir, num_shards)['cutoff']}'"
     recent = f"{cutoff} - INTERVAL {RECENT_DAYS} DAY"
     in_shard = f"hash(client_id) % {num_shards} = {shard}"
-    # ponytail: every shard scans all purchase files and drops ~(N-1)/N of the
-    # rows (about +45% total CPU at 8 shards); bucket purchases by shard at
-    # ingestion if that read amplification starts to dominate.
     # NOT MATERIALIZED: scan the shard's lines twice instead of buffering them
     # in memory (peak RSS per shard ~1.4 GB -> ~0.4 GB at 8 shards).
     query = f"""
     WITH lines AS NOT MATERIALIZED (
-        SELECT * FROM {_purchases(processed_dir)} WHERE {in_shard}
+        SELECT * FROM {_purchases(processed_dir, shard)}
     ),
     clients AS (
         SELECT * FROM '{processed_dir}/clients.parquet' WHERE {in_shard}
@@ -140,7 +130,13 @@ def build_shard(
     """
     # Write then rename so a crashed worker never leaves a half-written shard.
     tmp = dst.with_suffix(".tmp")
-    con.execute(f"COPY ({query}) TO '{tmp}' (FORMAT parquet)")
+    with duckdb.connect(config={"threads": threads}) as con:
+        # Parallel float sums change in the last bit with thread scheduling;
+        # summing as DECIMAL is exact, so a rerun (or another shard count) is
+        # bit-identical.
+        for fn in ("sum", "avg"):
+            con.execute(f"CREATE MACRO d{fn}(x) AS {fn}(x::DECIMAL(18, 4))::DOUBLE")
+        con.execute(f"COPY ({query}) TO '{tmp}' (FORMAT parquet)")
     tmp.replace(dst)
     return dst
 
@@ -157,27 +153,27 @@ def merge_shards(
     files = ", ".join(f"'{p}'" for p in shards)
     labels = processed_dir / "uplift_train.parquet"
     dst = out_dir / "client_features.parquet"
-    con = duckdb.connect()
-    con.execute(f"""
-        CREATE TABLE merged AS
-        SELECT
-            f.client_id,
-            u.treatment_flg::INTEGER AS treatment,
-            u.target::INTEGER AS y,
-            f.* EXCLUDE (client_id)
-        FROM read_parquet([{files}], hive_partitioning=0) AS f
-        JOIN '{labels}' AS u USING (client_id)
-        ORDER BY f.client_id
-    """)
-    # Stale shards from a run with another num_shards would duplicate or drop
-    # clients; refuse to write rather than train on that.
-    got = con.execute(
-        "SELECT count(*), count(DISTINCT client_id) FROM merged"
-    ).fetchone()
-    want = con.execute(f"SELECT count(*) FROM '{labels}'").fetchone()
-    if got is None or want is None or got != (want[0], want[0]):
-        raise ValueError(f"merged rows/distinct {got} != labeled clients {want}")
-    con.execute(f"COPY merged TO '{dst}' (FORMAT parquet)")
+    with duckdb.connect() as con:
+        con.execute(f"""
+            CREATE TABLE merged AS
+            SELECT
+                f.client_id,
+                u.treatment_flg::INTEGER AS treatment,
+                u.target::INTEGER AS y,
+                f.* EXCLUDE (client_id)
+            FROM read_parquet([{files}], hive_partitioning=0) AS f
+            JOIN '{labels}' AS u USING (client_id)
+            ORDER BY f.client_id
+        """)
+        # Stale shards from a run with another num_shards would duplicate or drop
+        # clients; refuse to write rather than train on that.
+        got = con.execute(
+            "SELECT count(*), count(DISTINCT client_id) FROM merged"
+        ).fetchone()
+        want = con.execute(f"SELECT count(*) FROM '{labels}'").fetchone()
+        if got is None or want is None or got != (want[0], want[0]):
+            raise ValueError(f"merged rows/distinct {got} != labeled clients {want}")
+        con.execute(f"COPY merged TO '{dst}' (FORMAT parquet)")
     return dst
 
 

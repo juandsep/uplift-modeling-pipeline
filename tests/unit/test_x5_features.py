@@ -2,9 +2,11 @@
 
 from datetime import datetime, timedelta
 
+import duckdb
 import pandas as pd
 import pytest
 
+from uplift_pipeline.data.x5 import write_purchases
 from uplift_pipeline.features.x5 import build_shard, merge_shards
 
 CUTOFF = datetime(2019, 3, 18, 12, 0)
@@ -12,7 +14,7 @@ N_CLIENTS = 40
 NUM_SHARDS = 4
 
 
-def _write_inputs(root):
+def _write_inputs(root, num_shards):
     ids = [f"c{i:03d}" for i in range(N_CLIENTS)]
     ages = [30] * N_CLIENTS
     ages[:3] = [-7491, 1901, 13]  # all outside 14..100
@@ -65,26 +67,27 @@ def _write_inputs(root):
             "regular_points_spent", "express_points_spent", "purchase_sum",
             "store_id", "product_id", "product_quantity", "trn_sum_from_iss",
             "trn_sum_from_red"]  # fmt: skip
-    purchases = pd.DataFrame(rows, columns=cols)
-    for month, part in purchases.groupby(
-        purchases.transaction_datetime.dt.strftime("%Y-%m")
-    ):
-        (root / "purchases" / f"month={month}").mkdir(parents=True)
-        part.to_parquet(root / "purchases" / f"month={month}" / "data_0.parquet")
+    with duckdb.connect() as con:
+        con.register("purchases", pd.DataFrame(rows, columns=cols))
+        write_purchases(con, "purchases", root, num_shards)
     return ids, labeled
+
+
+def _build(root, num_shards):
+    processed, out = root / "processed", root / "features"
+    processed.mkdir(parents=True)
+    ids, labeled = _write_inputs(processed, num_shards)
+    shards = [
+        pd.read_parquet(build_shard(processed, out, s, num_shards))
+        for s in range(num_shards)
+    ]
+    merged = pd.read_parquet(merge_shards(out, num_shards, processed))
+    return processed, out, ids, labeled, shards, merged
 
 
 @pytest.fixture
 def built(tmp_path):
-    processed, out = tmp_path / "processed", tmp_path / "features"
-    processed.mkdir()
-    ids, labeled = _write_inputs(processed)
-    shards = [
-        pd.read_parquet(build_shard(processed, out, s, NUM_SHARDS))
-        for s in range(NUM_SHARDS)
-    ]
-    merged = pd.read_parquet(merge_shards(out, NUM_SHARDS, processed))
-    return processed, out, ids, labeled, shards, merged
+    return _build(tmp_path, NUM_SHARDS)
 
 
 def test_shards_partition_clients(built):
@@ -137,3 +140,15 @@ def test_merge_requires_every_shard(built):
     (out / "shards" / "shard=2.parquet").unlink()
     with pytest.raises(FileNotFoundError, match="shard=2"):
         merge_shards(out, NUM_SHARDS)
+
+
+@pytest.mark.parametrize("num_shards", [1, 3])
+def test_features_independent_of_shard_count(built, tmp_path, num_shards):
+    merged = _build(tmp_path / str(num_shards), num_shards)[-1]
+    pd.testing.assert_frame_equal(merged, built[-1], check_exact=True)
+
+
+def test_shard_count_must_match_ingestion(built):
+    processed, out, *_ = built
+    with pytest.raises(ValueError, match="num_shards=4, not 2"):
+        build_shard(processed, out, 0, 2)

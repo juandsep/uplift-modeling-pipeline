@@ -64,10 +64,10 @@ if spend reaches $15 in a month.
 The Airflow DAG `uplift_training` is triggered by hand (the dataset is
 static):
 
-1. `ingest`: DuckDB converts the raw CSVs to Parquet, purchases partitioned
-   by month (45.8M rows in about 16 s).
-2. `features_shard`: builds 30 per-client features, split into 8 shards by
-   `hash(client_id) % N` that run in parallel.
+1. `ingest`: DuckDB converts the raw CSVs to Parquet (45.8M purchase rows),
+   purchases partitioned by client shard `hash(client_id) % N`, then month.
+2. `features_shard`: builds 30 per-client features in N = 8 shards that run in
+   parallel, each reading only its own purchases.
 3. `merge_features`: joins the shards with the treatment flag and the label.
 4. `train`: fits every learner in `LEARNERS` on one shared split, logs one
    MLflow run per learner with its Qini curve, and registers the best one.
