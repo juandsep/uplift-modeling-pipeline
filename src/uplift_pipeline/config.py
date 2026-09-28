@@ -78,3 +78,13 @@ def refresh_mlflow_token(uri: str) -> None:
             os.environ["MLFLOW_TRACKING_TOKEN"] = resp.read().decode()
     except OSError:
         pass  # No metadata server: not on GCP.
+
+
+def init_mlflow(experiment: str | None = None) -> None:
+    """Point MLflow at MLFLOW_TRACKING_URI, with a fresh token, and the experiment."""
+    import mlflow  # Imported here: config stays cheap to import.
+
+    refresh_mlflow_token(MLFLOW_TRACKING_URI)
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    if experiment:
+        mlflow.set_experiment(experiment)

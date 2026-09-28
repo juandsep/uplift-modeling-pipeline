@@ -78,12 +78,15 @@ A full run takes about 5 minutes on an e2-standard-4 spot VM.
 
 ## Serving
 
-![First predict request](docs/diagrams/predict.png)
+![Model load and predict request](docs/diagrams/predict.png)
 
 The API serves one fixed model version (`MODEL_VERSION`), never `latest`.
 Loading a model runs pickled code, so a moving alias would let anyone with
-registry write access change what runs in production. The model is loaded on
-the first request of an instance and kept in memory.
+registry write access change what runs in production. Each instance loads the
+model once, at startup, and keeps it in memory: a request never calls MLflow
+or GCS. `/ready` answers 200 once the model is loaded, and the Cloud Run
+startup probe holds traffic until then. `/health` is a plain liveness check.
+If the model cannot be loaded, `/ready` and `/predict` answer 503.
 
 Two checks guard `/predict`: Cloud Run IAM (the caller needs
 `roles/run.invoker`) and the `X-API-Key` header.
@@ -98,12 +101,13 @@ gcloud run services proxy uplift-api-staging --region us-central1 --port 8080
 ```
 
 The first time, gcloud installs the `cloud-run-proxy` component; run the
-command again if it exits after installing. The first request after a cold
-start can take a minute while the model loads.
+command again if it exits after installing. After a scale to zero, the first
+request waits about a minute while a new instance loads the model.
 
 Open http://localhost:8080/docs, click "Authorize" and paste the staging key
 (`gcloud secrets versions access latest --secret uplift-api-key-staging`).
-Each record needs the 30 features the model was trained on. To build a
+Each record needs exactly the 30 features the model was trained on; missing
+or unknown keys get a 422 that names them. To build a
 request from the local feature table:
 
 ```bash
