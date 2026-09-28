@@ -88,6 +88,11 @@ or GCS. `/ready` answers 200 once the model is loaded, and the Cloud Run
 startup probe holds traffic until then. `/health` is a plain liveness check.
 If the model cannot be loaded, `/ready` and `/predict` answer 503.
 
+`/metrics` exposes Prometheus metrics per instance: request latency by path
+and status (p50/p95/p99 come from the histogram), records per request, the
+distribution of predicted uplift, rejected requests by reason, and the model
+URI being served.
+
 Two checks guard `/predict`: Cloud Run IAM (the caller needs
 `roles/run.invoker`) and the `X-API-Key` header.
 

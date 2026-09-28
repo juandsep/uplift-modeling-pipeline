@@ -2,6 +2,7 @@
 
 import logging
 import secrets
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -13,11 +14,36 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.security import APIKeyHeader
 from mlflow.exceptions import MlflowException
 from mlflow.pyfunc import PyFuncModel
+from prometheus_client import Counter, Gauge, Histogram, make_asgi_app
 from pydantic import BaseModel, Field
 
 from uplift_pipeline import config
 
 logger = logging.getLogger(__name__)
+
+# Per instance: Prometheus scrapes each process and sums across them.
+LATENCY = Histogram(
+    "uplift_request_seconds",
+    "Request latency",
+    ["path", "status"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10),
+)
+BATCH = Histogram(
+    "uplift_batch_records",
+    "Records per /predict request",
+    buckets=(1, 10, 50, 100, 250, 500, 1000),
+)
+UPLIFT = Histogram(
+    "uplift_prediction",
+    "Predicted uplift per record",
+    buckets=(-0.1, -0.05, -0.02, -0.01, 0, 0.01, 0.02, 0.05, 0.1, 0.2),
+)
+PREDICT_ERRORS = Counter(
+    "uplift_predict_errors", "Rejected /predict requests", ["reason"]
+)
+MODEL = Gauge("uplift_model_info", "1 for the model this instance serves", ["uri"])
+# Fixed label set: raw paths from scanners would blow up the series count.
+_PATHS = {"/predict", "/ready", "/health"}
 
 # Loaded once per instance, before it takes traffic. None: /predict answers 503.
 _model: PyFuncModel | None = None
@@ -32,6 +58,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # The shared MLflow server is IAM-only.
         config.init_mlflow()
         _model = mlflow.pyfunc.load_model(config.MODEL_URI)
+        MODEL.labels(uri=config.MODEL_URI).set(1)
     except Exception:
         # Start anyway: /health stays up, /ready and /predict answer 503.
         logger.exception("model not loaded: refusing to serve predictions")
@@ -43,6 +70,8 @@ def get_model() -> PyFuncModel | None:
 
 
 app = FastAPI(title="Uplift API", lifespan=lifespan)
+# Unauthenticated like /health; on Cloud Run, IAM still guards it.
+app.mount("/metrics", make_asgi_app())
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -83,6 +112,17 @@ async def reject_oversized_body(
     return await call_next(request)
 
 
+@app.middleware("http")
+async def record_latency(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    start = time.perf_counter()
+    response = await call_next(request)
+    path = request.url.path if request.url.path in _PATHS else "other"
+    LATENCY.labels(path, str(response.status_code)).observe(time.perf_counter() - start)
+    return response
+
+
 class PredictRequest(BaseModel):
     # null = missing feature value (e.g. unknown age); the model handles NaN.
     records: list[dict[str, float | None]] = Field(
@@ -116,6 +156,7 @@ def ready() -> dict[str, str]:
 def predict(req: PredictRequest) -> PredictResponse:
     model = get_model()
     if model is None:
+        PREDICT_ERRORS.labels("no_model").inc()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="service unavailable",
@@ -128,6 +169,7 @@ def predict(req: PredictRequest) -> PredictResponse:
         if missing or unknown:
             # Feature names are not secret to a caller holding the API key.
             keys = [f"missing {k}" for k in missing] + [f"unknown {k}" for k in unknown]
+            PREDICT_ERRORS.labels("feature_mismatch").inc()
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"features do not match the model: {keys[:10]}",
@@ -135,6 +177,7 @@ def predict(req: PredictRequest) -> PredictResponse:
     empty = [i for i, r in enumerate(req.records) if all(v is None for v in r.values())]
     if empty:
         # Some nulls are fine (the model handles NaN); all null carries no signal.
+        PREDICT_ERRORS.labels("all_null").inc()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"records with all features null: {empty[:10]}",
@@ -145,7 +188,12 @@ def predict(req: PredictRequest) -> PredictResponse:
         # Never echo internal errors back to the caller: they leak the tracking
         # URI and stack details. Details go to the log instead.
         logger.exception("prediction failed")
+        PREDICT_ERRORS.labels("model_error").inc()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid input"
         ) from None
-    return PredictResponse(uplift=np.asarray(uplift, dtype=float).tolist())
+    values: np.ndarray = np.asarray(uplift, dtype=float)
+    BATCH.observe(len(values))
+    for v in values:
+        UPLIFT.observe(v)
+    return PredictResponse(uplift=values.tolist())
