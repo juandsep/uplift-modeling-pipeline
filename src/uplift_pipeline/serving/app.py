@@ -2,6 +2,7 @@
 
 import logging
 import secrets
+import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -97,6 +98,42 @@ def require_api_key(key: str | None = Depends(_api_key_header)) -> None:
         )
 
 
+class TokenBucket:
+    """Requests per second with a burst of the same size. Thread-safe."""
+
+    def __init__(self, rate: float) -> None:
+        self.rate = rate
+        self.tokens = rate
+        self.last = time.monotonic()
+        self.lock = threading.Lock()
+
+    def take(self) -> bool:
+        with self.lock:
+            now = time.monotonic()
+            self.tokens = min(self.rate, self.tokens + (now - self.last) * self.rate)
+            self.last = now
+            if self.tokens < 1:
+                return False
+            self.tokens -= 1
+            return True
+
+
+# ponytail: one bucket per instance, not per caller: there is one API key per
+# environment. The global cap is RATE_LIMIT_RPS x Cloud Run max-instances; move
+# to per-key buckets (or API Gateway) if callers get their own keys.
+_bucket = TokenBucket(config.RATE_LIMIT_RPS)
+
+
+def rate_limit() -> None:
+    if config.RATE_LIMIT_RPS > 0 and not _bucket.take():
+        PREDICT_ERRORS.labels("rate_limited").inc()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="rate limit exceeded",
+            headers={"Retry-After": "1"},
+        )
+
+
 @app.middleware("http")
 async def reject_oversized_body(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -164,7 +201,8 @@ def ready() -> dict[str, str]:
 @app.post(
     "/predict",
     response_model=PredictResponse,
-    dependencies=[Depends(require_api_key)],
+    # Auth first: unauthenticated calls must not drain the bucket.
+    dependencies=[Depends(require_api_key), Depends(rate_limit)],
 )
 def predict(req: PredictRequest) -> PredictResponse:
     model = get_model()

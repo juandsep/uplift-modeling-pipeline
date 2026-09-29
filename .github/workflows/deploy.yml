@@ -84,7 +84,7 @@ jobs:
           service: ${{ env.STAGING == 'true' && 'uplift-api-staging' || 'uplift-api' }}
           region: ${{ vars.GCP_REGION }}
           image: ${{ env.IMAGE }}
-          # Cap the fan-out: the API has no rate limiting of its own.
+          # Cap the fan-out: with RATE_LIMIT_RPS per instance this bounds total load.
           # Scales to zero; staging gets a smaller cap. The model loads at
           # instance start: the startup probe holds traffic until /ready (up to
           # 240s), and CPU boost speeds up the load.
