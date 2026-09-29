@@ -134,7 +134,9 @@ curl -s localhost:8080/predict -H "X-API-Key: $KEY" \
 Every training run creates one parent MLflow run in the `uplift` experiment
 (dataset, learners, Qini and AUUC of each, overlaid Qini curves) and one
 child run per learner (metrics, fit time, its curve and the model). Only the
-best learner is registered. To browse it:
+best learner is registered. The `features_sha256` param is the SHA-256 of the
+feature table, so a model can be traced to the exact data it saw. To browse
+it:
 
 ```bash
 gcloud run services proxy mlflow --region us-central1 --project jd-portfolio-shared
