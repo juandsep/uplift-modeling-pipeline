@@ -187,6 +187,30 @@ uv run python -m uplift_pipeline.drift reference_profile.json covariate.parquet 
   --pushgateway localhost:9091 --window covariate
 ```
 
+### Monitoring dashboard
+
+![Grafana dashboard on the missing-features scenario](docs/img/grafana-dashboard.png)
+
+`monitoring/` runs the API image with the production model, Prometheus, a
+Pushgateway for the drift job, and Grafana with the dashboard provisioned from
+JSON. It runs on your machine and costs nothing; on Cloud Run, the built-in
+request metrics cover latency and errors without a Prometheus server.
+
+```bash
+monitoring/fetch_model.sh          # download the served model (version 2)
+docker compose -f monitoring/docker-compose.yml up -d --build
+for s in baseline covariate missing concept; do
+  uv run python -m uplift_pipeline.simulate $s --n 10000 \
+    --send http://localhost:8000 --api-key local-key --out $s.parquet
+  uv run python -m uplift_pipeline.drift data/features/x5/client_features.parquet \
+    $s.parquet --scores data/scores/x5/scores.parquet \
+    --pushgateway localhost:9091 --window $s
+done
+```
+
+Grafana is on http://localhost:3000 (pick the drift window at the top),
+Prometheus on http://localhost:9090.
+
 ## Run locally
 
 Requires [uv](https://docs.astral.sh/uv/). On macOS, xgboost also needs

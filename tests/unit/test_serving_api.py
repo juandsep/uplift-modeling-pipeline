@@ -129,6 +129,7 @@ def _sample(client, name, **labels):
 def test_metrics_count_predictions_and_rejections(client):
     records = {"records": [{"x": 1.0}, {"x": 2.0}]}
     before = _sample(client, "uplift_prediction_count")
+    sum_before = _sample(client, "uplift_prediction_value_sum")
     ok_before = _sample(
         client, "uplift_request_seconds_count", path="/predict", status="200"
     )
@@ -142,6 +143,9 @@ def test_metrics_count_predictions_and_rejections(client):
     client.get("/wp-login.php")
 
     assert _sample(client, "uplift_prediction_count") == before + 2
+    assert _sample(client, "uplift_prediction_value_sum") == pytest.approx(
+        sum_before + 0.2
+    )
     assert (
         _sample(client, "uplift_request_seconds_count", path="/predict", status="200")
         == ok_before + 1

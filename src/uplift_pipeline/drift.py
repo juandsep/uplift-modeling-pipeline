@@ -115,11 +115,20 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("reference", help="reference_profile.json or a feature table")
     p.add_argument("current", help="Parquet batch of clients")
+    p.add_argument(
+        "--scores",
+        help="batch scores.parquet: profile its held-out uplift when the "
+        "reference is a feature table (models older than the profile)",
+    )
     p.add_argument("--pushgateway", metavar="HOST:PORT")
     p.add_argument("--window", default="batch", help="grouping key for the push")
     args = p.parse_args()
 
-    result = report(_load_reference(args.reference), pd.read_parquet(args.current))
+    reference = _load_reference(args.reference)
+    if args.scores:
+        scores = pd.read_parquet(args.scores, columns=["uplift", "split"])
+        reference |= profile(scores[scores["split"] == "test"], ["uplift"])
+    result = report(reference, pd.read_parquet(args.current))
     for feature, value in sorted(result["feature_psi"].items(), key=lambda kv: -kv[1]):
         print(f"{feature:28s} {value:7.3f}{'  DRIFT' if value > DRIFT else ''}")
     for key in ("uplift_psi", "top20_lift", "rows"):

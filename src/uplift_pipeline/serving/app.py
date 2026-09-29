@@ -44,6 +44,9 @@ UPLIFT = Histogram(
     "Predicted uplift per record",
     buckets=(-0.1, -0.05, -0.02, -0.01, 0, 0.01, 0.02, 0.05, 0.1, 0.2),
 )
+# The histogram drops _sum because its buckets go negative (the sum can fall);
+# a gauge carries it so the dashboard can plot the mean uplift.
+UPLIFT_SUM = Gauge("uplift_prediction_value_sum", "Sum of predicted uplift")
 PREDICT_ERRORS = Counter(
     "uplift_predict_errors", "Rejected /predict requests", ["reason"]
 )
@@ -204,6 +207,7 @@ def predict(req: PredictRequest) -> PredictResponse:
         ) from None
     values: np.ndarray = np.asarray(uplift, dtype=float)
     BATCH.observe(len(values))
+    UPLIFT_SUM.inc(float(values.sum()))
     for v in values:
         UPLIFT.observe(v)
     return PredictResponse(uplift=values.tolist())
