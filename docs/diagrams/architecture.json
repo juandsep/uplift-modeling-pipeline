@@ -38,6 +38,6 @@
   "cards": [
     { "dot": "emerald", "title": "Training", "items": ["Airflow DAG on a spot VM, manual trigger", "Best learner by Qini is registered in MLflow", "Every client scored and written to GCS"] },
     { "dot": "cyan", "title": "Serving", "items": ["FastAPI on Cloud Run, scales to zero", "Loads one pinned MODEL_VERSION on first use", "Cloud Run IAM plus X-API-Key"] },
-    { "dot": "amber", "title": "Cost", "items": ["Nothing bills while idle", "Budget guard unlinks billing at $15", "Demo is a free static page"] }
+    { "dot": "amber", "title": "Cost", "items": ["Nothing bills while idle", "Budget guard unlinks billing at $5", "Demo is a free static page"] }
   ]
 }

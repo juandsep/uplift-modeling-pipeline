@@ -38,9 +38,9 @@ variable "billing_account" {
 }
 
 variable "monthly_budget_usd" {
-  description = "Billing is cut at this amount. Kept below the real limit ($20) because billing data lags."
+  description = "Billing is cut at this amount. Billing data lags by hours, so spend can pass it slightly."
   type        = number
-  default     = 15
+  default     = 5
 }
 
 provider "google" {
