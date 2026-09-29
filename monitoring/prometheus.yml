@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: uplift-api
+    static_configs:
+      - targets: ["api:8080"]
+  # Batch drift results; honor_labels keeps the job and window they were pushed with.
+  - job_name: pushgateway
+    honor_labels: true
+    static_configs:
+      - targets: ["pushgateway:9091"]

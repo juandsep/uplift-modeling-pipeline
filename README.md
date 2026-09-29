@@ -88,8 +88,14 @@ or GCS. `/ready` answers 200 once the model is loaded, and the Cloud Run
 startup probe holds traffic until then. `/health` is a plain liveness check.
 If the model cannot be loaded, `/ready` and `/predict` answer 503.
 
+`/metrics` exposes Prometheus metrics per instance: request latency by path
+and status (p50/p95/p99 come from the histogram), records per request, the
+distribution of predicted uplift, rejected requests by reason, and the model
+URI being served.
+
 Two checks guard `/predict`: Cloud Run IAM (the caller needs
-`roles/run.invoker`) and the `X-API-Key` header.
+`roles/run.invoker`) and the `X-API-Key` header. Limits for production use
+are in [Production limits](#production-limits).
 
 ### Try the API
 
@@ -140,6 +146,94 @@ Qini measured on that control group drops, or when feature drift (PSI above
 0.2) shows the clients have changed. Release a new model by setting
 `MODEL_VERSION` in the staging environment first, then in production.
 
+## Drift scenarios
+
+`python -m uplift_pipeline.simulate` resamples held-out X5 clients and breaks
+one thing on purpose, to check that monitoring notices. Sent to staging, 10k
+clients each:
+
+| Scenario | What changes | Mean uplift | Lift in top 20% |
+|---|---|---|---|
+| baseline | nothing | 0.028 | +0.120 |
+| covariate | spend x1.5, age +10 | 0.030 | +0.120 |
+| missing | 30% of rows lose 5 features | 0.012 | +0.111 |
+| concept | treatment no longer changes y | 0.028 | -0.019 |
+
+Covariate drift barely moves the predictions, so it has to be caught on the
+inputs (PSI). Concept drift leaves inputs and predictions untouched; only
+labels from a new campaign with a control group show it.
+
+```bash
+uv run python -m uplift_pipeline.simulate covariate --n 10000 \
+  --send http://localhost:8080 --api-key "$KEY" --out covariate.parquet
+```
+
+### Drift checks
+
+Training logs `reference_profile.json` next to the registered model: decile
+edges and shares of every feature (null as its own bin) and of the predicted
+uplift. `python -m uplift_pipeline.drift REFERENCE CURRENT` compares a batch
+against it and can push the result to a Prometheus Pushgateway. On the
+scenarios above:
+
+| Scenario | Features with PSI > 0.2 | Uplift PSI | Lift in top 20% |
+|---|---|---|---|
+| baseline | none | 0.00 | +0.120 |
+| covariate | age, mean_spend, max_spend | 0.02 | +0.120 |
+| missing | the 5 nulled features | 0.40 | +0.111 |
+| concept | none | 0.00 | -0.019 |
+
+```bash
+uv run python -m uplift_pipeline.drift reference_profile.json covariate.parquet \
+  --pushgateway localhost:9091 --window covariate
+```
+
+### Monitoring dashboard
+
+![Grafana dashboard on the missing-features scenario](docs/img/grafana-dashboard.png)
+
+`monitoring/` runs the API image with the production model, Prometheus, a
+Pushgateway for the drift job, and Grafana with the dashboard provisioned from
+JSON. It runs on your machine and costs nothing; on Cloud Run, the built-in
+request metrics cover latency and errors without a Prometheus server.
+
+```bash
+monitoring/fetch_model.sh          # download the served model (version 2)
+docker compose -f monitoring/docker-compose.yml up -d --build
+for s in baseline covariate missing concept; do
+  uv run python -m uplift_pipeline.simulate $s --n 10000 \
+    --send http://localhost:8000 --api-key local-key --out $s.parquet
+  uv run python -m uplift_pipeline.drift data/features/x5/client_features.parquet \
+    $s.parquet --scores data/scores/x5/scores.parquet \
+    --pushgateway localhost:9091 --window $s
+done
+```
+
+Grafana is on http://localhost:3000 (pick the drift window at the top),
+Prometheus on http://localhost:9090.
+
+## Production limits
+
+What bounds cost and load on the production API:
+
+- Cloud Run scales to zero and to at most 10 instances (2 for staging). Idle
+  costs nothing; the first request after idle waits about 70 s for the model
+  to load.
+- Each instance accepts `RATE_LIMIT_RPS` requests to `/predict` per second
+  (default 20) and answers 429 beyond that. The limit is per instance, so the
+  service as a whole takes at most 200 requests per second. There is one API
+  key per environment, so there is no per-caller limit.
+- A request carries at most `MAX_RECORDS` records (1000) and
+  `MAX_BODY_BYTES` bytes (1 MiB).
+- The monthly budget guard unlinks billing at $15.
+- `infra/alerts.tf` emails `alert_email` when the p99 latency of
+  `uplift-api` stays above 1 s for 5 minutes, or when it answers more than
+  five 5xx responses in 5 minutes. Both come from Cloud Run's built-in
+  request metrics.
+
+Not covered: the Prometheus metrics on `/metrics` are only scraped by the
+local stack, and the drift job runs by hand. Neither runs on GCP.
+
 ## Run locally
 
 Requires [uv](https://docs.astral.sh/uv/). On macOS, xgboost also needs
@@ -181,12 +275,12 @@ uv run mypy src
 2. Create the infrastructure. `infra/main.tf` creates the APIs, the data
    bucket, the Artifact Registry repository, service accounts, Workload
    Identity Federation for GitHub and the budget guard. `infra/airflow_vm.tf`
-   adds the Airflow VM, off by default.
+   adds the Airflow VM, off by default, and `infra/alerts.tf` the API alerts.
 
    ```bash
    gcloud auth application-default login
    cd infra
-   cp terraform.tfvars.example terraform.tfvars   # set project and billing account
+   cp terraform.tfvars.example terraform.tfvars   # set project, billing account and alert email
    terraform init
    terraform apply -var airflow_vm_enabled=true
    terraform output github_variables
@@ -235,6 +329,7 @@ uv run mypy src
 | `API_KEY` | none | Required by `/predict` (sent as `X-API-Key`) |
 | `MAX_RECORDS` | `1000` | Max rows per request |
 | `MAX_BODY_BYTES` | `1048576` | Max request size |
+| `RATE_LIMIT_RPS` | `20` | `/predict` requests per second per instance; `0` disables |
 
 ## Project layout
 

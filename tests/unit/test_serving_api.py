@@ -115,3 +115,58 @@ def test_predict_rejects_unknown_features(client):
     assert resp.status_code == 422
     keys = [f"unknown k{i:02}" for i in range(10)]
     assert resp.json()["detail"] == f"features do not match the model: {keys}"
+
+
+def _sample(client, name, **labels):
+    """Current value of one Prometheus sample from /metrics."""
+    for line in client.get("/metrics").text.splitlines():
+        if line.startswith(name + "{") or line.startswith(name + " "):
+            if all(f'{k}="{v}"' in line for k, v in labels.items()):
+                return float(line.rsplit(" ", 1)[1])
+    return 0.0
+
+
+def test_metrics_count_predictions_and_rejections(client):
+    records = {"records": [{"x": 1.0}, {"x": 2.0}]}
+    before = _sample(client, "uplift_prediction_count")
+    sum_before = _sample(client, "uplift_prediction_value_sum")
+    ok_before = _sample(
+        client, "uplift_request_seconds_count", path="/predict", status="200"
+    )
+    mismatch_before = _sample(
+        client, "uplift_predict_errors_total", reason="feature_mismatch"
+    )
+
+    assert client.post("/predict", json=records, headers=HEADERS).status_code == 200
+    bad = {"records": [{"y": 1.0}]}
+    assert client.post("/predict", json=bad, headers=HEADERS).status_code == 422
+    client.get("/wp-login.php")
+
+    assert _sample(client, "uplift_prediction_count") == before + 2
+    assert _sample(client, "uplift_prediction_value_sum") == pytest.approx(
+        sum_before + 0.2
+    )
+    assert (
+        _sample(client, "uplift_request_seconds_count", path="/predict", status="200")
+        == ok_before + 1
+    )
+    assert (
+        _sample(client, "uplift_predict_errors_total", reason="feature_mismatch")
+        == mismatch_before + 1
+    )
+    # Unknown paths share one label instead of creating a series each.
+    assert 'path="/wp-login.php"' not in client.get("/metrics").text
+
+
+def test_predict_rate_limited(client, monkeypatch):
+    monkeypatch.setattr(config, "RATE_LIMIT_RPS", 2.0)
+    monkeypatch.setattr(serving, "_bucket", serving.TokenBucket(2.0))
+    body = {"records": [{"x": 1.0}]}
+    # Rejected keys do not spend tokens.
+    for _ in range(3):
+        assert client.post("/predict", json=body).status_code == 401
+    codes = [
+        client.post("/predict", json=body, headers=HEADERS).status_code
+        for _ in range(3)
+    ]
+    assert codes == [200, 200, 429]

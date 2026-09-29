@@ -16,6 +16,8 @@ LEARNERS = [s.strip() for s in os.getenv("LEARNERS", "t_xgb,x_xgb,s_xgb").split(
 API_KEY = os.getenv("API_KEY", "")
 MAX_RECORDS = int(os.getenv("MAX_RECORDS", "1000"))
 MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", str(1024 * 1024)))
+# /predict requests per second per instance (burst of the same size). 0 disables.
+RATE_LIMIT_RPS = float(os.getenv("RATE_LIMIT_RPS", "20"))
 
 # Model pinning. Serving refuses a floating alias (`latest`, `staging`, ...)
 # unless dev opts out explicitly.
