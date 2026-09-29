@@ -1,6 +1,8 @@
 """Train, evaluate, register the model. Run: python -m uplift_pipeline.train"""
 
+import hashlib
 import time
+from pathlib import Path
 
 import mlflow
 import pandas as pd
@@ -54,6 +56,12 @@ def run(
             "dataset": "x5",
             "features_path": features_path,
         }
+        # The path alone does not pin the data: the DAG rewrites the same file.
+        if Path(features_path).is_file():
+            with open(features_path, "rb") as f:
+                dataset["features_sha256"] = hashlib.file_digest(
+                    f, "sha256"
+                ).hexdigest()
     else:
         df, features = load_training_data(n_samples, seed)
         dataset = {"dataset": "synthetic", "n_samples": n_samples}
