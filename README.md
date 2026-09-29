@@ -55,7 +55,7 @@ metadata in a free Neon Postgres database.
 | Demo page | Top-k targeting simulator on precomputed scores | Hugging Face static Space |
 
 Nothing bills while idle, and a budget guard unlinks billing from the project
-if spend reaches $15 in a month.
+if spend reaches $5 in a month.
 
 ## Training pipeline
 
@@ -227,7 +227,7 @@ What bounds cost and load on the production API:
   key per environment, so there is no per-caller limit.
 - A request carries at most `MAX_RECORDS` records (1000) and
   `MAX_BODY_BYTES` bytes (1 MiB).
-- The monthly budget guard unlinks billing at $15.
+- The monthly budget guard unlinks billing at $5.
 - `infra/alerts.tf` emails `alert_email` when the p99 latency of
   `uplift-api` stays above 1 s for 5 minutes, or when it answers more than
   five 5xx responses in 5 minutes. Both come from Cloud Run's built-in
