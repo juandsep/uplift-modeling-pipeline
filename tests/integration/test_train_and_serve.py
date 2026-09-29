@@ -1,3 +1,5 @@
+import hashlib
+
 import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
@@ -105,6 +107,7 @@ def test_train_on_x5_features_with_nulls(tmp_path, monkeypatch):
     assert params["n_rows"] == str(n)
     assert params["n_features"] == "2"
     assert params["features_path"] == str(path)
+    assert params["features_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
 
     monkeypatch.setattr(
         config, "MODEL_URI", f"models:/{config.REGISTERED_MODEL}/{version.version}"
