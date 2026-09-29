@@ -94,7 +94,8 @@ distribution of predicted uplift, rejected requests by reason, and the model
 URI being served.
 
 Two checks guard `/predict`: Cloud Run IAM (the caller needs
-`roles/run.invoker`) and the `X-API-Key` header.
+`roles/run.invoker`) and the `X-API-Key` header. Limits for production use
+are in [Production limits](#production-limits).
 
 ### Try the API
 
@@ -211,6 +212,28 @@ done
 Grafana is on http://localhost:3000 (pick the drift window at the top),
 Prometheus on http://localhost:9090.
 
+## Production limits
+
+What bounds cost and load on the production API:
+
+- Cloud Run scales to zero and to at most 10 instances (2 for staging). Idle
+  costs nothing; the first request after idle waits about 70 s for the model
+  to load.
+- Each instance accepts `RATE_LIMIT_RPS` requests to `/predict` per second
+  (default 20) and answers 429 beyond that. The limit is per instance, so the
+  service as a whole takes at most 200 requests per second. There is one API
+  key per environment, so there is no per-caller limit.
+- A request carries at most `MAX_RECORDS` records (1000) and
+  `MAX_BODY_BYTES` bytes (1 MiB).
+- The monthly budget guard unlinks billing at $15.
+- `infra/alerts.tf` emails `alert_email` when the p99 latency of
+  `uplift-api` stays above 1 s for 5 minutes, or when it answers more than
+  five 5xx responses in 5 minutes. Both come from Cloud Run's built-in
+  request metrics.
+
+Not covered: the Prometheus metrics on `/metrics` are only scraped by the
+local stack, and the drift job runs by hand. Neither runs on GCP.
+
 ## Run locally
 
 Requires [uv](https://docs.astral.sh/uv/). On macOS, xgboost also needs
@@ -252,12 +275,12 @@ uv run mypy src
 2. Create the infrastructure. `infra/main.tf` creates the APIs, the data
    bucket, the Artifact Registry repository, service accounts, Workload
    Identity Federation for GitHub and the budget guard. `infra/airflow_vm.tf`
-   adds the Airflow VM, off by default.
+   adds the Airflow VM, off by default, and `infra/alerts.tf` the API alerts.
 
    ```bash
    gcloud auth application-default login
    cd infra
-   cp terraform.tfvars.example terraform.tfvars   # set project and billing account
+   cp terraform.tfvars.example terraform.tfvars   # set project, billing account and alert email
    terraform init
    terraform apply -var airflow_vm_enabled=true
    terraform output github_variables
@@ -306,6 +329,7 @@ uv run mypy src
 | `API_KEY` | none | Required by `/predict` (sent as `X-API-Key`) |
 | `MAX_RECORDS` | `1000` | Max rows per request |
 | `MAX_BODY_BYTES` | `1048576` | Max request size |
+| `RATE_LIMIT_RPS` | `20` | `/predict` requests per second per instance; `0` disables |
 
 ## Project layout
 

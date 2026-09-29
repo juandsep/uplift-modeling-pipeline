@@ -156,3 +156,17 @@ def test_metrics_count_predictions_and_rejections(client):
     )
     # Unknown paths share one label instead of creating a series each.
     assert 'path="/wp-login.php"' not in client.get("/metrics").text
+
+
+def test_predict_rate_limited(client, monkeypatch):
+    monkeypatch.setattr(config, "RATE_LIMIT_RPS", 2.0)
+    monkeypatch.setattr(serving, "_bucket", serving.TokenBucket(2.0))
+    body = {"records": [{"x": 1.0}]}
+    # Rejected keys do not spend tokens.
+    for _ in range(3):
+        assert client.post("/predict", json=body).status_code == 401
+    codes = [
+        client.post("/predict", json=body, headers=HEADERS).status_code
+        for _ in range(3)
+    ]
+    assert codes == [200, 200, 429]
