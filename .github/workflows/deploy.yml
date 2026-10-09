@@ -24,7 +24,7 @@ jobs:
   deploy:
     # Skip until the GCP repository variables exist (see README).
     if: vars.GCP_PROJECT_ID != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # production requires a reviewer (repository settings), so main is never
     # shipped unattended. MODEL_VERSION is set per environment.
     environment: ${{ github.ref == 'refs/heads/dev' && 'staging' || 'production' }}
