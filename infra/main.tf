@@ -1,10 +1,13 @@
 # Base GCP resources: APIs, data bucket, image registry, service accounts,
 # GitHub Workload Identity Federation and a budget alert.
-# State is local (terraform.tfstate, git-ignored). Move it to a GCS backend
-# if more than one person applies this.
+# State lives in gs://project-7f1055c8-f6c9-4880-a23-tfstate (versioned),
+# created by hand like in telegram-personal-assistant.
 
 terraform {
   required_version = ">= 1.6"
+  backend "gcs" {
+    bucket = "project-7f1055c8-f6c9-4880-a23-tfstate"
+  }
   required_providers {
     google = {
       source  = "hashicorp/google"
