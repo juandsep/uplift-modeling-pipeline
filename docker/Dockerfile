@@ -1,6 +1,6 @@
 # Two stages: causalml publishes no linux/aarch64 wheel, so on arm64 it is
 # compiled from source and needs a toolchain the runtime image must not carry.
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
@@ -19,7 +19,7 @@ COPY src ./src
 RUN uv sync --locked
 
 # Runtime: no compiler, no package manager cache, no build tooling.
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # xgboost needs OpenMP.
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
